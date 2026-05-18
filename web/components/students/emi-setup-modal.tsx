@@ -171,24 +171,61 @@ export async function saveEmiPlan(
   const start = new Date(value.first_due_date);
   if (Number.isNaN(start.getTime())) return { ok: false, error: 'Invalid first due date.' };
 
-  const rows = Array.from({ length: value.num_installments }, (_, i) => {
+  // 3. Get existing EMIs so we can preserve paid ones
+  const { data: existing } = await sb
+    .from('emi_schedule')
+    .select('installment_no, amount, due_date, status, paid_date, paid_via, paid_notes, reminder_date')
+    .eq('student_id', studentId)
+    .order('installment_no');
+
+  const paidExisting = ((existing ?? []) as any[]).filter((r) => r.status === 'paid');
+
+  // 4. Delete ALL existing EMI rows (we'll re-insert paid + new unpaid)
+  const { error: delErr } = await sb.from('emi_schedule').delete().eq('student_id', studentId);
+  if (delErr) return { ok: false, error: delErr.message };
+
+  // 5. Build new rows — keep paid ones unchanged (preserve their amounts/dates),
+  //    add new unpaid rows for the rest using the new monthly_amount.
+  const newRows: any[] = [];
+
+  // Re-insert paid rows as they were
+  for (const p of paidExisting) {
+    newRows.push({
+      student_id: studentId,
+      installment_no: p.installment_no,
+      installments_total: value.num_installments,
+      amount: p.amount,
+      due_date: p.due_date,
+      reminder_date: p.reminder_date,
+      status: 'paid',
+      paid_date: p.paid_date,
+      paid_via: p.paid_via,
+      paid_notes: p.paid_notes,
+    });
+  }
+
+  // Add new unpaid rows to fill up to num_installments
+  const paidNumbers = new Set(paidExisting.map((p) => p.installment_no));
+  for (let i = 1; i <= value.num_installments; i++) {
+    if (paidNumbers.has(i)) continue;
     const due = new Date(start);
-    due.setMonth(due.getMonth() + i);
+    due.setMonth(due.getMonth() + (i - 1));
     const remind = new Date(due);
     remind.setDate(remind.getDate() - value.reminder_days_before);
-
-    return {
+    newRows.push({
       student_id: studentId,
-      installment_no: i + 1,
+      installment_no: i,
       installments_total: value.num_installments,
       amount: value.monthly_amount,
       due_date: due.toISOString().slice(0, 10),
       reminder_date: remind.toISOString().slice(0, 10),
       status: 'upcoming',
-    };
-  });
+    });
+  }
 
-  const { error: emiErr } = await sb.from('emi_schedule').insert(rows as any);
+  if (newRows.length === 0) return { ok: true };
+
+  const { error: emiErr } = await sb.from('emi_schedule').insert(newRows as any);
   if (emiErr) return { ok: false, error: emiErr.message };
   return { ok: true };
 }
@@ -205,6 +242,35 @@ export function EmiSetupModal({
   const { toast } = useToast();
   const [value, setValue] = useState<EmiSetupValue>(emiDefaults());
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Pre-load existing student EMI data so editing pre-fills correctly.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [{ data: stu }, { data: rows }] = await Promise.all([
+        sb.from('students').select('total_fee, down_payment, down_payment_date').eq('id', studentId).maybeSingle(),
+        sb.from('emi_schedule').select('amount, installment_no, due_date').eq('student_id', studentId).order('installment_no'),
+      ]);
+      if (cancelled) return;
+      const existingRows = (rows ?? []) as any[];
+      if (stu || existingRows.length > 0) {
+        const firstDue = existingRows[0]?.due_date ?? new Date().toISOString().slice(0, 10);
+        setValue({
+          total_fee:            Number((stu as any)?.total_fee ?? 0),
+          down_payment:         Number((stu as any)?.down_payment ?? 0),
+          down_payment_date:    (stu as any)?.down_payment_date ?? new Date().toISOString().slice(0, 10),
+          num_installments:     existingRows.length || 9,
+          monthly_amount:       Number(existingRows[0]?.amount ?? 0),
+          first_due_date:       firstDue,
+          reminder_days_before: 2,
+        });
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId]);
 
   async function save() {
     setBusy(true);
@@ -231,7 +297,11 @@ export function EmiSetupModal({
         </div>
 
         <div className="p-5 overflow-auto">
-          <EmiSetupForm value={value} onChange={setValue} />
+          {loading ? (
+            <div className="py-8 text-center text-[13px] text-ink-500">Loading existing plan…</div>
+          ) : (
+            <EmiSetupForm value={value} onChange={setValue} />
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-ink-100 shrink-0">

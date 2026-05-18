@@ -23,8 +23,9 @@ export function StudentSlideover() {
   const params = useSearchParams();
   const router = useRouter();
   const id = params.get('student');
+  const initialTab = (params.get('tab') as Tab) || 'profile';
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>('profile');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [student, setStudent] = useState<Student | null>(null);
   const [callsCount, setCallsCount] = useState(0);
   const [reminderOpen, setReminderOpen] = useState(false);
@@ -33,11 +34,13 @@ export function StudentSlideover() {
   useEffect(() => {
     if (id) {
       setOpen(true);
-      setTab('profile');
+      const tabFromUrl = (params.get('tab') as Tab) || 'profile';
+      setTab(tabFromUrl);
     } else {
       setOpen(false);
     }
-  }, [id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, params]);
  
   useEffect(() => {
     if (!id) { setStudent(null); return; }

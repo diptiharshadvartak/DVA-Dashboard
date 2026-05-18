@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { IndianRupee, Plus, CheckCircle2 } from 'lucide-react';
+import { IndianRupee, Plus, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { StatusPill } from '@/components/ui/status-pill';
@@ -46,6 +46,12 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const totalPaid   = paidEmi + downPayment;
   const outstanding = Math.max(0, totalFee - totalPaid);
 
+  // Detect mismatch between configured total fee and what the EMI plan actually covers.
+  // mismatch > 0 means the EMI plan + down payment is LESS than total fee (under-collected).
+  // mismatch < 0 means EMIs would over-collect.
+  const planTotal = totalEmi + downPayment;
+  const mismatch = totalFee > 0 ? totalFee - planTotal : 0;
+
   if (!loaded) return <div className="text-[13px] text-ink-500">Loading…</div>;
 
   // No EMI plan + no down payment → empty state
@@ -78,6 +84,28 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
         <Kpi label="Paid so far" value={fmtINR(totalPaid)} sub={`${rows.filter(r=>r.status==='paid').length} of ${rows.length} EMIs paid`} tone="good" />
         <Kpi label="Outstanding" value={fmtINR(outstanding)} sub={rows.filter(r => r.status !== 'paid').length + ' EMIs left'} tone={outstanding > 0 ? 'warn' : 'good'} />
       </div>
+
+      {Math.abs(mismatch) > 1 && (
+        <div className="bg-amber-50/70 border border-amber-300 rounded-xl px-4 py-3.5 flex items-start gap-3">
+          <span className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 grid place-items-center shrink-0">
+            <AlertTriangle className="w-4 h-4" />
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-[13.5px] text-amber-900">EMI plan doesn't match total fee</div>
+            <div className="text-[12px] text-amber-800 mt-1 leading-relaxed">
+              Total fee is {fmtINR(totalFee)} but the plan covers only {fmtINR(planTotal)} (₹{Math.abs(mismatch).toLocaleString('en-IN')} {mismatch > 0 ? 'short' : 'extra'}).
+              <br />
+              Down payment {fmtINR(downPayment)} + {rows.length} EMIs of {fmtINR(rows[0]?.amount ?? 0)} = {fmtINR(planTotal)}.
+            </div>
+            <button
+              onClick={() => setSetupOpen(true)}
+              className="mt-2 h-7 px-3 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[11.5px] font-medium inline-flex items-center gap-1"
+            >
+              Fix EMI plan
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Down payment row (always shown if there is one) */}
       {downPayment > 0 && (
