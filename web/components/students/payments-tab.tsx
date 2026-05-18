@@ -12,6 +12,7 @@ import { EmiSetupModal } from './emi-setup-modal';
 import { MarkPaidModal } from './mark-paid-modal';
 import { EditPaymentModal } from './edit-payment-modal';
 import { ChangePaymentLinkModal } from './change-payment-link-modal';
+import { PaymentHistorySection } from './payment-history-section';
 import type { Database } from '@/types/database';
 
 type Emi = Database['public']['Tables']['emi_schedule']['Row'];
@@ -344,6 +345,8 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
         />
       )}
       {setupOpen && <EmiSetupModal studentId={studentId} onClose={() => setSetupOpen(false)} onSaved={load} />}
+
+      <PaymentHistorySection studentId={studentId} />
     </div>
   );
 }
