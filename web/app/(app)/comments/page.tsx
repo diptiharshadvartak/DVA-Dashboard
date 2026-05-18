@@ -1,10 +1,12 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { CommentsFeed } from '@/components/comments/comments-feed';
+import { requirePermission } from '@/lib/check-permission';
  
 export const dynamic = 'force-dynamic';
  
 export default async function CommentsPage() {
-  const sb = supabaseServer();
+  
+  await requirePermission('comments');const sb = supabaseServer();
  
   // Pull the most recent 500 call comments with student + coach info.
   // The client filters from this set; 500 is plenty for a dashboard view.

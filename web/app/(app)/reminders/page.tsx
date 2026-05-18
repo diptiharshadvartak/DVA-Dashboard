@@ -1,11 +1,13 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { ReminderEventsTable } from '@/components/reminders/events-table';
 import { RemindersActions } from '@/components/reminders/reminders-actions';
+import { requirePermission } from '@/lib/check-permission';
 
 export const dynamic = 'force-dynamic';
 
 export default async function RemindersPage() {
-  const sb = supabaseServer();
+  
+  await requirePermission('reminders');const sb = supabaseServer();
   const { data: events } = await sb.from('reminder_events').select('*').order('id');
 
   return (

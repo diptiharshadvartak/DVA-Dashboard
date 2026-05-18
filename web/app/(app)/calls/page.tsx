@@ -1,10 +1,12 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { QueueCard } from '@/components/calls/queue-card';
+import { requirePermission } from '@/lib/check-permission';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CallsPage() {
-  const sb = supabaseServer();
+  
+  await requirePermission('calls');const sb = supabaseServer();
   const { data } = await sb.from('v_students_silent_30d').select('*').limit(8);
 
   return (

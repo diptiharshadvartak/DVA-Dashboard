@@ -3,6 +3,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { EmiTable } from '@/components/emi/emi-table';
 import { EmiActions } from '@/components/emi/emi-actions';
+import { requirePermission } from '@/lib/check-permission';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,8 @@ function startOfMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 
 function startOfPrevMonth(d: Date) { return new Date(d.getFullYear(), d.getMonth() - 1, 1); }
 
 export default async function EmiPage({ searchParams }: { searchParams: { tab?: string } }) {
-  const sb = supabaseServer();
+  
+  await requirePermission('emi');const sb = supabaseServer();
   const activeTab = (['due', 'overdue', 'upcoming', 'paid'].includes(searchParams?.tab ?? '')
     ? (searchParams!.tab as Tab)
     : 'due');

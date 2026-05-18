@@ -5,6 +5,7 @@ import {
   type CallsPerWeekPoint, type CollectionRatePoint, type ReminderStatusSlice, type FunnelStage,
 } from '@/components/reports/charts';
 import { ReportsDateFilter } from './date-filter';
+import { requirePermission } from '@/lib/check-permission';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,7 @@ function computeRange(params: { from?: string; to?: string; preset?: string }): 
 }
 
 export default async function ReportsPage({ searchParams }: { searchParams: { from?: string; to?: string; preset?: string } }) {
+  await requirePermission('reports');
   const sb = supabaseServer();
   const now = new Date();
   const range = computeRange(searchParams ?? {});

@@ -1,10 +1,12 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { ProgressClient } from './progress-client';
+import { requirePermission } from '@/lib/check-permission';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ProgressPage() {
-  const sb = supabaseServer();
+  
+  await requirePermission('progress');const sb = supabaseServer();
 
   const { data: students } = await sb
     .from('students')

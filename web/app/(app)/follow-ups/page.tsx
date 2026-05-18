@@ -1,10 +1,12 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { FollowupsClient } from './followups-client';
+import { requirePermission } from '@/lib/check-permission';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FollowUpsPage() {
-  const sb = supabaseServer();
+  
+  await requirePermission('follow-ups');const sb = supabaseServer();
   const today = new Date().toISOString().slice(0, 10);
 
   // Only fetch follow-ups due TODAY or earlier (overdue).
