@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/saiki/Downloads/dva-dashboard-updated/dva-dashboard-updated/**)",
+      "Read(//c/Users/saiki/Downloads/dva-dashboard-updated/**)"
+    ]
+  }
+}

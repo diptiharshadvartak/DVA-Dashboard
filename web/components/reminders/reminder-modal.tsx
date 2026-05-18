@@ -41,9 +41,14 @@ export function ReminderModal({ open, onClose, studentId, emiId }: {
 
   if (!open) return null;
 
-  // Payment link from student profile — set once, used for all reminders
-  const paymentLink = (student as any)?.payment_link ?? '';
-  const hasPaymentLink = !!paymentLink.trim();
+  // Priority: EMI Cashfree link > EMI generic link > Student default link
+  const emiCashfreeLink = (emi as any)?.cashfree_link_url ?? '';
+  const emiGenericLink = (emi as any)?.payment_link ?? '';
+  const studentLink = (student as any)?.payment_link ?? '';
+  const paymentLink = (emiCashfreeLink || emiGenericLink || studentLink).trim();
+  const hasPaymentLink = !!paymentLink;
+  const linkSource: 'cashfree' | 'emi-set' | 'student-default' | 'none' =
+    emiCashfreeLink ? 'cashfree' : (emiGenericLink ? 'emi-set' : (studentLink ? 'student-default' : 'none'));
 
   const message = student && emi
     ? `Hi ${student.first_name ?? 'there'}, your EMI of ${fmtINR(Number(emi.amount))} (${emi.installment_no}/${emi.installments_total}) is due on ${fmtDate(emi.due_date)}.${hasPaymentLink ? `\n\nPay here: ${paymentLink}` : ''}\n— Team DVA`
@@ -112,16 +117,27 @@ export function ReminderModal({ open, onClose, studentId, emiId }: {
 
           <Section label="Payment link">
             {hasPaymentLink ? (
-              <div className="bg-accent-50/40 border border-accent-200/60 rounded-lg p-3 flex items-center gap-2.5">
-                <LinkIcon className="w-4 h-4 text-accent-700 shrink-0" />
-                <a href={paymentLink} target="_blank" rel="noopener noreferrer"
-                   className="text-[12.5px] text-accent-700 hover:underline truncate flex-1 min-w-0">
-                  {paymentLink}
-                </a>
-                <Link href={`/students?student=${studentId}&tab=payments` as any}
-                      className="text-[11px] font-medium text-ink-600 hover:text-ink-900 hover:underline shrink-0">
-                  Change
-                </Link>
+              <div className="bg-accent-50/40 border border-accent-200/60 rounded-lg p-3">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <LinkIcon className="w-4 h-4 text-accent-700 shrink-0" />
+                  <a href={paymentLink} target="_blank" rel="noopener noreferrer"
+                     className="text-[12.5px] text-accent-700 hover:underline truncate flex-1 min-w-0">
+                    {paymentLink}
+                  </a>
+                  <Link href={`/students?student=${studentId}&tab=payments` as any}
+                        className="text-[11px] font-medium text-ink-600 hover:text-ink-900 hover:underline shrink-0">
+                    Change
+                  </Link>
+                </div>
+                {linkSource === 'cashfree' && (
+                  <div className="text-[10.5px] text-blue-700 font-medium ml-6">✓ Cashfree link for this exact installment</div>
+                )}
+                {linkSource === 'emi-set' && (
+                  <div className="text-[10.5px] text-ink-500 ml-6">Custom link set for this installment</div>
+                )}
+                {linkSource === 'student-default' && (
+                  <div className="text-[10.5px] text-ink-500 ml-6">Using student&apos;s default link (same for all EMIs)</div>
+                )}
               </div>
             ) : (
               <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-3 flex items-start gap-2.5">

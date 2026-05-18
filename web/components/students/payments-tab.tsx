@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { IndianRupee, Plus, CheckCircle2, AlertTriangle, Pencil, Link as LinkIcon, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabaseBrowser } from '@/lib/supabase/client';
+import { useToast } from '@/components/shell/toast-region';
 import { StatusPill } from '@/components/ui/status-pill';
 import { fmtINR, fmtDate } from '@/lib/utils';
 import { ReminderModal } from '@/components/reminders/reminder-modal';
@@ -23,14 +24,43 @@ type StudentSlim = {
 
 export function PaymentsTab({ studentId }: { studentId: string }) {
   const sb = useMemo(() => supabaseBrowser(), []);
+  const { toast } = useToast();
   const [rows, setRows] = useState<Emi[]>([]);
   const [student, setStudent] = useState<StudentSlim | null>(null);
   const [reminderEmi, setReminderEmi] = useState<string | null>(null);
   const [payEmi, setPayEmi] = useState<Emi | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [editEmi, setEditEmi] = useState<Emi | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(false);
+  const [busyCashfree, setBusyCashfree] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  function copyLinkToClipboard(link: string) {
+    navigator.clipboard.writeText(link).then(() => {
+      toast('Link copied to clipboard', 'success');
+    }).catch(() => {
+      toast('Failed to copy', 'error');
+    });
+  }
+
+  async function generateCashfreeLink(emiId: string) {
+    setBusyCashfree(emiId);
+    try {
+      const res = await fetch('/api/cashfree/generate-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emiId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error ?? 'Failed');
+      toast('Cashfree link generated', 'success');
+      await load();
+    } catch (e: any) {
+      toast(e.message ?? 'Failed to generate Cashfree link', 'error');
+    } finally {
+      setBusyCashfree(null);
+    }
+  }
 
   async function load() {
     const [{ data: emi }, { data: stu }] = await Promise.all([
@@ -42,7 +72,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
     setLoaded(true);
   }
 
-  useEffect(() => { let cancel = false; (async () => { await load(); })().catch(() => {}); return () => { cancel = true; }; /* eslint-disable-next-line */ }, [studentId, sb]);
+  useEffect(() => { (async () => { await load(); })().catch(() => {}); /* eslint-disable-next-line */ }, [studentId, sb]);
 
   const totalEmi    = rows.reduce((s, r) => s + Number(r.amount), 0);
   const paidEmi     = rows.filter(r => r.status === 'paid').reduce((s, r) => s + Number(r.amount), 0);
@@ -51,15 +81,11 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const totalPaid   = paidEmi + downPayment;
   const outstanding = Math.max(0, totalFee - totalPaid);
 
-  // Detect mismatch between configured total fee and what the EMI plan actually covers.
-  // mismatch > 0 means the EMI plan + down payment is LESS than total fee (under-collected).
-  // mismatch < 0 means EMIs would over-collect.
   const planTotal = totalEmi + downPayment;
   const mismatch = totalFee > 0 ? totalFee - planTotal : 0;
 
   if (!loaded) return <div className="text-[13px] text-ink-500">Loading…</div>;
 
-  // No EMI plan + no down payment → empty state
   if (rows.length === 0 && !downPayment) {
     return (
       <>
@@ -75,16 +101,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
             <Plus className="w-4 h-4" /> Set up EMI plan
           </Button>
         </div>
-        {linkOpen && (
-        <ChangePaymentLinkModal
-          open={linkOpen}
-          onClose={() => setLinkOpen(false)}
-          onSaved={load}
-          studentId={studentId}
-          currentLink={student?.payment_link ?? null}
-        />
-      )}
-      {setupOpen && <EmiSetupModal studentId={studentId} onClose={() => setSetupOpen(false)} onSaved={load} />}
+        {setupOpen && <EmiSetupModal studentId={studentId} onClose={() => setSetupOpen(false)} onSaved={load} />}
       </>
     );
   }
@@ -105,7 +122,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
             <AlertTriangle className="w-4 h-4" />
           </span>
           <div className="flex-1 min-w-0">
-            <div className="font-semibold text-[13.5px] text-amber-900">EMI plan doesn't match total fee</div>
+            <div className="font-semibold text-[13.5px] text-amber-900">EMI plan doesn&apos;t match total fee</div>
             <div className="text-[12px] text-amber-800 mt-1 leading-relaxed">
               Total fee is {fmtINR(totalFee)} but the plan covers only {fmtINR(planTotal)} (₹{Math.abs(mismatch).toLocaleString('en-IN')} {mismatch > 0 ? 'short' : 'extra'}).
               <br />
@@ -128,14 +145,14 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
             <LinkIcon className="w-4 h-4" />
           </span>
           <div className="flex-1 min-w-0">
-            <div className="font-medium text-[13.5px]">Payment link</div>
+            <div className="font-medium text-[13.5px]">Student default payment link</div>
             <a href={student.payment_link} target="_blank" rel="noopener noreferrer"
                className="text-[11.5px] text-accent-700 hover:underline truncate block">
               {student.payment_link}
             </a>
           </div>
           <button
-            onClick={() => { navigator.clipboard.writeText(student.payment_link ?? ''); }}
+            onClick={() => copyLinkToClipboard(student.payment_link ?? '')}
             className="text-[11.5px] font-medium text-ink-600 hover:text-ink-900 inline-flex items-center gap-1"
             title="Copy payment link"
           >
@@ -146,12 +163,12 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
             className="text-[11.5px] font-medium text-accent-700 hover:underline inline-flex items-center gap-1"
             title="Change payment link"
           >
-            <Pencil className="w-3 h-3" /> Change link
+            <Pencil className="w-3 h-3" /> Change
           </button>
         </div>
       )}
 
-      {/* Down payment row (always shown if there is one) */}
+      {/* Down payment row */}
       {downPayment > 0 && (
         <div className="bg-emerald-50/60 border border-emerald-200/70 rounded-xl px-4 py-3 flex items-center gap-3">
           <span className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 grid place-items-center">
@@ -189,7 +206,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                   onClick={() => setLinkOpen(true)}
                   className="text-[11.5px] font-medium text-accent-700 hover:text-accent-900 hover:underline inline-flex items-center gap-1"
                 >
-                  <LinkIcon className="w-3 h-3" /> Add payment link
+                  <LinkIcon className="w-3 h-3" /> Add default link
                 </button>
               )}
               <button
@@ -201,13 +218,13 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-[60px_1fr_120px_140px_180px] gap-3 px-4 py-2 border-b border-ink-100 text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
+          <div className="grid grid-cols-[60px_1fr_120px_140px_220px] gap-3 px-4 py-2 border-b border-ink-100 text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
             <div>#</div><div>Amount</div><div>Due date</div><div>Status</div><div className="text-right">Action</div>
           </div>
           {rows.map((r) => (
-            <div key={r.id} className="grid grid-cols-[60px_1fr_120px_140px_180px] gap-3 px-4 py-3 items-center border-b border-ink-100 last:border-0 text-[13px]">
-              <div className="font-mono text-[11.5px] text-ink-500">{r.installment_no}/{r.installments_total}</div>
-              <div>{fmtINR(Number(r.amount))}</div>
+            <div key={r.id} className="grid grid-cols-[60px_1fr_120px_140px_220px] gap-3 px-4 py-3 items-center border-b border-ink-100 last:border-0 text-[13px]">
+              <div className="font-mono text-[12px] text-ink-700">{r.installment_no}/{r.installments_total}</div>
+              <div className="font-semibold">{fmtINR(Number(r.amount))}</div>
               <div className="text-ink-600">{fmtDate(r.due_date)}</div>
               <div><StatusPill status={r.status} /></div>
               <div className="text-right">
@@ -228,7 +245,38 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-end gap-1.5">
+                  <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                    {(r as any).cashfree_link_url ? (
+                      <>
+                        <a
+                          href={(r as any).cashfree_link_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1"
+                          title="Open Cashfree payment link"
+                        >
+                          <LinkIcon className="w-3 h-3" /> Open
+                        </a>
+                        <button
+                          onClick={() => copyLinkToClipboard((r as any).cashfree_link_url)}
+                          className="text-[11.5px] font-medium text-ink-600 hover:text-ink-900 inline-flex items-center gap-1"
+                          title="Copy link"
+                        >
+                          <Copy className="w-3 h-3" /> Copy
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => generateCashfreeLink(r.id)}
+                        disabled={busyCashfree === r.id}
+                        className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
+                        title="Generate Cashfree payment link for this EMI"
+                      >
+                        <LinkIcon className="w-3 h-3" />
+                        {busyCashfree === r.id ? 'Generating…' : 'Get link'}
+                      </button>
+                    )}
+                    <span className="text-ink-300">·</span>
                     <button
                       onClick={() => setReminderEmi(r.id)}
                       className="text-[11.5px] font-medium text-ink-600 hover:text-ink-900 hover:underline"
@@ -263,6 +311,15 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
       {reminderEmi && (
         <ReminderModal open={!!reminderEmi} onClose={() => setReminderEmi(null)} studentId={studentId} emiId={reminderEmi} />
       )}
+      {linkOpen && (
+        <ChangePaymentLinkModal
+          open={linkOpen}
+          onClose={() => setLinkOpen(false)}
+          onSaved={load}
+          studentId={studentId}
+          currentLink={student?.payment_link ?? null}
+        />
+      )}
       {editEmi && (
         <EditPaymentModal
           open={!!editEmi}
@@ -284,15 +341,6 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
           emiId={payEmi.id}
           amount={Number(payEmi.amount)}
           installmentLabel={`${payEmi.installment_no}/${payEmi.installments_total}`}
-        />
-      )}
-      {linkOpen && (
-        <ChangePaymentLinkModal
-          open={linkOpen}
-          onClose={() => setLinkOpen(false)}
-          onSaved={load}
-          studentId={studentId}
-          currentLink={student?.payment_link ?? null}
         />
       )}
       {setupOpen && <EmiSetupModal studentId={studentId} onClose={() => setSetupOpen(false)} onSaved={load} />}

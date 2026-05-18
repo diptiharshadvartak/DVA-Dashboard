@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Save, Eye, EyeOff, Check, ChevronDown, Sparkles, Mic,
   Info, Users, UserPlus, ShieldCheck, Loader2, AlertTriangle,
-  Trash2, ArrowDown, ArrowUp,
+  Trash2, ArrowDown, ArrowUp, CreditCard,
 } from 'lucide-react';
 import { useToast } from '@/components/shell/toast-region';
 
@@ -18,6 +18,8 @@ type Status = {
   openai_configured: boolean;    openai_last4: string;
   anthropic_configured: boolean; anthropic_last4: string;
   ai_configured: boolean;        ai_last4: string;
+  cashfree_configured?: boolean; cashfree_app_id_last4?: string;
+  cashfree_env?: 'sandbox' | 'production';
 };
 
 const PROVIDERS: Array<{ value: Provider; label: string; model: string; placeholder: string; helpUrl: string; supportsVoice: boolean }> = [
@@ -43,6 +45,13 @@ export function SettingsForm({
     ghl_location_id: '', ghl_pit_token: '', ai_api_key: '', openai_api_key: '',
   });
 
+  // Cashfree integration state
+  const initialCashfreeEnv: 'sandbox' | 'production' = status.cashfree_env ?? 'sandbox';
+  const [cashfreeAppId, setCashfreeAppId]                 = useState('');
+  const [cashfreeSecret, setCashfreeSecret]               = useState('');
+  const [cashfreeEnv, setCashfreeEnv]                     = useState<'sandbox' | 'production'>(initialCashfreeEnv);
+  const [cashfreeWebhookSecret, setCashfreeWebhookSecret] = useState('');
+
   const selectedProvider = PROVIDERS.find((p) => p.value === aiProvider) ?? PROVIDERS[1];
   const savedProviderSupportsVoice =
     PROVIDERS.find((p) => p.value === status.ai_provider)?.supportsVoice ?? false;
@@ -59,6 +68,15 @@ export function SettingsForm({
       if (form.ghl_pit_token.trim())   payload.ghl_pit_token   = form.ghl_pit_token.trim();
       if (form.ai_api_key.trim())      payload.ai_api_key      = form.ai_api_key.trim();
       if (form.openai_api_key.trim())  payload.openai_api_key  = form.openai_api_key.trim();
+      // Cashfree fields
+      if (cashfreeAppId.trim())          payload.cashfree_app_id           = cashfreeAppId.trim();
+      if (cashfreeSecret.trim())         payload.cashfree_secret_key       = cashfreeSecret.trim();
+      if (cashfreeWebhookSecret.trim())  payload.cashfree_webhook_secret   = cashfreeWebhookSecret.trim();
+      // Only send env if user changed it or is also setting credentials —
+      // otherwise unrelated saves would clobber a stored 'production' back to 'sandbox'.
+      if (cashfreeEnv !== initialCashfreeEnv || cashfreeAppId.trim() || cashfreeSecret.trim()) {
+        payload.cashfree_env = cashfreeEnv;
+      }
 
       const res = await fetch('/api/settings/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -68,6 +86,9 @@ export function SettingsForm({
       const { updated } = await res.json();
       toast(updated > 0 ? `Saved (${updated} field${updated > 1 ? 's' : ''})` : 'Nothing changed', 'success');
       setForm({ ghl_location_id: '', ghl_pit_token: '', ai_api_key: '', openai_api_key: '' });
+      setCashfreeAppId('');
+      setCashfreeSecret('');
+      setCashfreeWebhookSecret('');
       setTimeout(() => window.location.reload(), 600);
     } catch (e: any) { toast(e.message ?? 'Save failed', 'error'); }
     finally { setSaving(false); }
@@ -193,6 +214,81 @@ export function SettingsForm({
           Open reminder catalog →
         </a>
       </Card>
+
+      <Card title="Cashfree Payments" icon={<CreditCard className="w-4 h-4 text-blue-600" />}
+        desc="Generate payment links automatically for each EMI. Students pay via UPI/cards. Webhook auto-marks EMI as paid.">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[12px] font-medium text-ink-700 mb-1 block">Environment</label>
+              <select
+                value={cashfreeEnv}
+                onChange={(e) => setCashfreeEnv(e.target.value as 'sandbox' | 'production')}
+                disabled={!isAdmin}
+                className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] bg-white"
+              >
+                <option value="sandbox">Sandbox (Test)</option>
+                <option value="production">Production (Live)</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              {status.cashfree_configured && (
+                <div className="flex items-center gap-1.5 text-[12px] text-emerald-700">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Configured (app ID ends with {status.cashfree_app_id_last4 || '••••'})
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[12px] font-medium text-ink-700 mb-1 block">App ID (x-client-id)</label>
+            <input
+              type="text"
+              value={cashfreeAppId}
+              onChange={(e) => setCashfreeAppId(e.target.value)}
+              placeholder={status.cashfree_configured ? 'Already configured — leave blank to keep' : 'TEST10456abc...'}
+              disabled={!isAdmin}
+              className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] focus:border-accent-500 focus:ring-2 focus:ring-accent-100 outline-none bg-white font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="text-[12px] font-medium text-ink-700 mb-1 block">Secret Key (x-client-secret)</label>
+            <input
+              type="password"
+              value={cashfreeSecret}
+              onChange={(e) => setCashfreeSecret(e.target.value)}
+              placeholder={status.cashfree_configured ? 'Already configured — leave blank to keep' : 'cfsk_ma_test_...'}
+              disabled={!isAdmin}
+              className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] focus:border-accent-500 focus:ring-2 focus:ring-accent-100 outline-none bg-white font-mono"
+            />
+            <div className="text-[11px] text-ink-500 mt-1">
+              From Cashfree Dashboard → Developers → API Keys. Keep this secret.
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[12px] font-medium text-ink-700 mb-1 block">Webhook Secret (optional)</label>
+            <input
+              type="password"
+              value={cashfreeWebhookSecret}
+              onChange={(e) => setCashfreeWebhookSecret(e.target.value)}
+              placeholder="From Cashfree → Developers → Webhooks → Add Webhook"
+              disabled={!isAdmin}
+              className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] bg-white font-mono"
+            />
+            <div className="text-[11px] text-ink-500 mt-1 leading-relaxed">
+              <strong>Setup webhook in Cashfree:</strong><br/>
+              1. Dashboard → Developers → Webhooks → Add Webhook<br/>
+              2. Paste this URL: <code className="bg-ink-100 px-1.5 py-0.5 rounded text-[10.5px]">https://[your-domain]/api/cashfree/webhook</code><br/>
+              3. Select events: <em>Payment Success</em>, <em>Payment Failed</em><br/>
+              4. Copy the generated secret here → save
+            </div>
+          </div>
+        </div>
+      </Card>
+
 
       <div className="flex items-center justify-end gap-3 pt-2">
         {!isAdmin && (
