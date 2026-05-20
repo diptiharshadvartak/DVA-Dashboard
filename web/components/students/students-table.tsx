@@ -27,12 +27,14 @@ export function StudentsTable({
   initialFilter = 'all',
   lastCallByStudent = {},
   lastPaymentByStudent = {},
+  emiStatusByStudent = {},
 }: {
   initialStudents: Row[];
   totalCount: number;
   initialFilter?: InitialFilter;
   lastCallByStudent?: Record<string, string>;
   lastPaymentByStudent?: Record<string, { mode: string; date: string }>;
+  emiStatusByStudent?: Record<string, string>;
 }) {
   const router = useRouter();
   const params = useSearchParams();
