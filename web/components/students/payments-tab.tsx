@@ -34,6 +34,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const [editEmi, setEditEmi] = useState<Emi | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [busyCashfree, setBusyCashfree] = useState<string | null>(null);
+  const [paymentIdsByEmi, setPaymentIdsByEmi] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
 
   function copyLinkToClipboard(link: string) {
@@ -64,49 +65,28 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   }
 
   async function load() {
-    const [{ data: emi }, { data: stu }] = await Promise.all([
+    const [{ data: emi }, { data: stu }, { data: cfEvents }] = await Promise.all([
       sb.from('emi_schedule').select('*').eq('student_id', studentId).order('installment_no'),
       sb.from('students').select('total_fee, down_payment, down_payment_date, payment_link').eq('id', studentId).maybeSingle(),
+      sb.from('cashfree_events').select('emi_id, payload').eq('student_id', studentId).eq('event_type', 'payment_success'),
     ]);
     setRows((emi ?? []) as Emi[]);
     setStudent((stu as any) ?? null);
+    
+    // Build payment ID map: emi_id → payment_id
+    const idMap: Record<string, string> = {};
+    for (const evt of (cfEvents ?? []) as any[]) {
+      if (evt.emi_id) {
+        const pid = evt.payload?.data?.payment?.cf_payment_id 
+                 ?? evt.payload?.data?.payment?.payment_id;
+        if (pid) idMap[evt.emi_id] = pid.toString();
+      }
+    }
+    setPaymentIdsByEmi(idMap);
     setLoaded(true);
   }
 
   useEffect(() => { (async () => { await load(); })().catch(() => {}); /* eslint-disable-next-line */ }, [studentId, sb]);
-
-  // Realtime: refresh the EMI grid the moment the Cashfree webhook flips an
-  // installment to paid (or any other status change). Without this, the UI
-  // stays stale until the user navigates away and back.
-  useEffect(() => {
-    const topic = `realtime:payments:${studentId}`;
-    sb.getChannels().forEach((c) => { if (c.topic === topic) sb.removeChannel(c); });
-
-    const ch = sb
-      .channel(`payments:${studentId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'emi_schedule', filter: `student_id=eq.${studentId}` },
-        () => { load().catch(() => {}); }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'cashfree_events', filter: `student_id=eq.${studentId}` },
-        () => { load().catch(() => {}); }
-      )
-      .subscribe();
-
-    // Also refresh when the tab regains focus — catches cases where realtime
-    // wasn't enabled for the table (which silently no-ops the subscription).
-    const onVisible = () => { if (document.visibilityState === 'visible') load().catch(() => {}); };
-    document.addEventListener('visibilitychange', onVisible);
-
-    return () => {
-      sb.removeChannel(ch);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-    /* eslint-disable-next-line */
-  }, [studentId, sb]);
 
   const totalEmi    = rows.reduce((s, r) => s + Number(r.amount), 0);
   const paidEmi     = rows.filter(r => r.status === 'paid').reduce((s, r) => s + Number(r.amount), 0);
@@ -269,6 +249,9 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                       {r.payment_mode && (
                         <div className="text-[10.5px] text-emerald-700 font-medium">via {r.payment_mode}</div>
                       )}
+                      {paymentIdsByEmi[r.id] && (
+                        <div className="text-[10px] text-ink-400 font-mono">ID: {paymentIdsByEmi[r.id].slice(0, 12)}...</div>
+                      )}
                     </div>
                     <button
                       onClick={() => setEditEmi(r)}
@@ -280,48 +263,36 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                   </div>
                 ) : (
                   <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                    {(() => {
-                      const cfUrl = (r as any).cashfree_link_url as string | null;
-                      const cfStatus = (r as any).cashfree_link_status as string | null;
-                      // ACTIVE: show open/copy. EXPIRED/CANCELLED/missing: allow regenerate.
-                      const linkUsable = cfUrl && (cfStatus == null || cfStatus === 'ACTIVE');
-                      if (linkUsable) {
-                        return (
-                          <>
-                            <a
-                              href={cfUrl!}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1"
-                              title="Open Cashfree payment link"
-                            >
-                              <LinkIcon className="w-3 h-3" /> Open
-                            </a>
-                            <button
-                              onClick={() => copyLinkToClipboard(cfUrl!)}
-                              className="text-[11.5px] font-medium text-ink-600 hover:text-ink-900 inline-flex items-center gap-1"
-                              title="Copy link"
-                            >
-                              <Copy className="w-3 h-3" /> Copy
-                            </button>
-                          </>
-                        );
-                      }
-                      const expired = cfStatus === 'EXPIRED' || cfStatus === 'CANCELLED';
-                      return (
-                        <button
-                          onClick={() => generateCashfreeLink(r.id)}
-                          disabled={busyCashfree === r.id}
-                          className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
-                          title={expired ? `Previous link is ${cfStatus} — generate a new one` : 'Generate Cashfree payment link for this EMI'}
+                    {(r as any).cashfree_link_url ? (
+                      <>
+                        <a
+                          href={(r as any).cashfree_link_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1"
+                          title="Open Cashfree payment link"
                         >
-                          <LinkIcon className="w-3 h-3" />
-                          {busyCashfree === r.id
-                            ? 'Generating…'
-                            : expired ? `Regenerate (${cfStatus!.toLowerCase()})` : 'Get link'}
+                          <LinkIcon className="w-3 h-3" /> Open
+                        </a>
+                        <button
+                          onClick={() => copyLinkToClipboard((r as any).cashfree_link_url)}
+                          className="text-[11.5px] font-medium text-ink-600 hover:text-ink-900 inline-flex items-center gap-1"
+                          title="Copy link"
+                        >
+                          <Copy className="w-3 h-3" /> Copy
                         </button>
-                      );
-                    })()}
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => generateCashfreeLink(r.id)}
+                        disabled={busyCashfree === r.id}
+                        className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
+                        title="Generate Cashfree payment link for this EMI"
+                      >
+                        <LinkIcon className="w-3 h-3" />
+                        {busyCashfree === r.id ? 'Generating…' : 'Get link'}
+                      </button>
+                    )}
                     <span className="text-ink-300">·</span>
                     <button
                       onClick={() => setReminderEmi(r.id)}

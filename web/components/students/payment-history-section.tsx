@@ -49,6 +49,35 @@ export function PaymentHistorySection({ studentId }: { studentId: string }) {
   ).length;
 
   const displayEvents = expanded ? events : events.slice(0, 5);
+  
+  // Helper to extract payment ID from event payload
+  function getPaymentId(event: CashfreeEvent): string | null {
+    if (!event.payload) return null;
+    const p = event.payload as any;
+    // Cashfree webhook structure: data.payment.cf_payment_id
+    return p?.data?.payment?.cf_payment_id?.toString()
+      || p?.data?.payment?.payment_id
+      || p?.cf_payment_id
+      || p?.payment_id
+      || null;
+  }
+  
+  // Helper to extract payment method/mode from payload
+  function getPaymentMethod(event: CashfreeEvent): string | null {
+    if (!event.payload) return null;
+    const p = event.payload as any;
+    return p?.data?.payment?.payment_method?.card?.card_network
+      || p?.data?.payment?.payment_method?.upi?.upi_id  
+      || p?.data?.payment?.payment_group
+      || null;
+  }
+  
+  // Helper to extract amount from payload
+  function getPaymentAmount(event: CashfreeEvent): number | null {
+    if (!event.payload) return null;
+    const p = event.payload as any;
+    return p?.data?.payment?.payment_amount || p?.payment_amount || null;
+  }
 
   return (
     <div className="bg-white border border-ink-200/70 rounded-xl mt-5">
@@ -125,6 +154,27 @@ function EventRow({ event }: { event: CashfreeEvent }) {
             Link ID: {event.cashfree_link_id}
           </div>
         )}
+        {(() => {
+          const pid = event.payload?.data?.payment?.cf_payment_id 
+                   ?? event.payload?.data?.payment?.payment_id
+                   ?? event.payload?.cf_payment_id
+                   ?? event.payload?.payment_id;
+          const ref = event.payload?.data?.payment?.bank_reference;
+          return (
+            <>
+              {pid && (
+                <div className="text-[10.5px] text-emerald-700 mt-1 font-mono break-all">
+                  Payment ID: {pid}
+                </div>
+              )}
+              {ref && (
+                <div className="text-[10.5px] text-ink-400 mt-0.5 font-mono break-all">
+                  Bank Ref: {ref}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
@@ -218,24 +268,6 @@ function describeEvent(event: CashfreeEvent): {
         label: 'Payment Failed',
         tone: { bg: 'bg-rose-100', text: 'text-rose-700' },
         detail: payload.amount ? `Failed payment of ${fmtINR(Number(payload.amount))}` : null,
-      };
-
-    case 'link_cancelled':
-      return {
-        icon: <XCircle className="w-4 h-4" />,
-        label: 'Payment Link Cancelled',
-        tone: { bg: 'bg-ink-100', text: 'text-ink-700' },
-        detail: payload.reason === 'superseded_by_regeneration'
-          ? 'Cancelled because a new link was generated for this EMI'
-          : null,
-      };
-
-    case 'link_cancel_failed':
-      return {
-        icon: <AlertTriangle className="w-4 h-4" />,
-        label: 'Link Cancel Failed',
-        tone: { bg: 'bg-amber-100', text: 'text-amber-700' },
-        detail: 'Previous link could not be cancelled before regenerating (may already be paid or expired)',
       };
     
     default:
