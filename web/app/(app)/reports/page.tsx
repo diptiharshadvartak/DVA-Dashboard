@@ -39,22 +39,29 @@ export default async function ReportsPage() {
     sb.from('call_logs').select('created_at, student_id').gte('created_at', since12wIso),
     sb.from('emi_schedule').select('amount, due_date, status, paid_date').gte('due_date', since6mIso),
     sb.from('reminders').select('event_id, status').gte('created_at', since30dIso),
-    sb.from('students').select('id, month_1, month_2, month_3, month_4, month_5, month_6, is_super_baker_finisher, is_hall_of_fame, certificate_issued, bbr_attended, deleted_at').is('deleted_at', null),
+    sb.from('students').select('id, month_1, month_2, month_3, month_4, month_5, month_6, is_super_baker_finisher, is_super_baker_pending, is_hall_of_fame, is_hall_of_fame_pending, certificate_issued, certificate_pending_manual, bbr_attended, bbr_pending, deleted_at').is('deleted_at', null),
   ]);
   
   // ---------- Achievement metrics ----------
   const achievementList = (achievementStudents ?? []) as any[];
   
-  const superBakerCount   = achievementList.filter(s => s.is_super_baker_finisher).length;
-  const hallOfFameCount   = achievementList.filter(s => s.is_hall_of_fame).length;
-  const sixMonthCount     = achievementList.filter(s => 
+  const superBakerCount         = achievementList.filter(s => s.is_super_baker_finisher).length;
+  const superBakerPendingCount  = achievementList.filter(s => s.is_super_baker_pending && !s.is_super_baker_finisher).length;
+  const hallOfFameCount         = achievementList.filter(s => s.is_hall_of_fame).length;
+  const hallOfFamePendingCount  = achievementList.filter(s => s.is_hall_of_fame_pending && !s.is_hall_of_fame).length;
+  const sixMonthCount           = achievementList.filter(s => 
     s.month_1 && s.month_2 && s.month_3 && s.month_4 && s.month_5 && s.month_6
   ).length;
-  const certIssuedCount   = achievementList.filter(s => s.certificate_issued).length;
-  const certPendingCount  = achievementList.filter(s => 
-    s.month_1 && s.month_2 && s.month_3 && s.month_4 && s.month_5 && s.month_6 && !s.certificate_issued
+  const certIssuedCount         = achievementList.filter(s => s.certificate_issued).length;
+  // Cert pending: either manually marked OR auto-derived (6 months done + not issued)
+  const certPendingCount        = achievementList.filter(s => 
+    !s.certificate_issued && (
+      s.certificate_pending_manual || 
+      (s.month_1 && s.month_2 && s.month_3 && s.month_4 && s.month_5 && s.month_6)
+    )
   ).length;
-  const bbrAttendedCount  = achievementList.filter(s => s.bbr_attended).length;
+  const bbrAttendedCount        = achievementList.filter(s => s.bbr_attended).length;
+  const bbrPendingCount         = achievementList.filter(s => s.bbr_pending && !s.bbr_attended).length;
   
   // ---------- Average completion data ----------
   const totalMonthsAcrossAll = achievementList.reduce((sum, s) => 
@@ -92,9 +99,11 @@ export default async function ReportsPage() {
     { name: 'BBR Attended',    count: bbrAttendedCount,   fill: '#6366f1' },  // indigo
   ];
 
-  // Certificate status pie data
+  // Certificate status pie data — slices must be mutually exclusive, so
+  // "Not Eligible" is the residual after Issued + Pending (covers students
+  // who haven't done 6 months and have neither cert flag set).
   const totalActive = achievementList.length;
-  const certNotEligible = totalActive - sixMonthCount;  // haven't done 6 months
+  const certNotEligible = Math.max(0, totalActive - certIssuedCount - certPendingCount);
   const certStatusData: CertStatusSlice[] = [
     { name: 'Issued',        value: certIssuedCount,    fill: '#10b981' },
     { name: 'Pending',       value: certPendingCount,   fill: '#f97316' },
@@ -175,14 +184,14 @@ export default async function ReportsPage() {
           <KpiCard
             label="Super Baker"
             value={superBakerCount.toString()}
-            sub="Finishers"
+            sub={superBakerPendingCount > 0 ? `Finishers · ${superBakerPendingCount} pending` : 'Finishers'}
             tone="good"
             icon="Trophy"
           />
           <KpiCard
             label="Hall of Fame"
             value={hallOfFameCount.toString()}
-            sub="Achievers"
+            sub={hallOfFamePendingCount > 0 ? `Achievers · ${hallOfFamePendingCount} pending` : 'Achievers'}
             tone="good"
             icon="Award"
           />
@@ -210,7 +219,7 @@ export default async function ReportsPage() {
           <KpiCard
             label="BBR Attended"
             value={bbrAttendedCount.toString()}
-            sub="Students"
+            sub={bbrPendingCount > 0 ? `Students · ${bbrPendingCount} pending` : 'Students'}
             tone="good"
             icon="GraduationCap"
           />
