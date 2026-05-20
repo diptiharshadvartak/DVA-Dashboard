@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { createPaymentLink, CashfreeError } from '@/lib/cashfree/client';
+import { createPaymentLink, cancelPaymentLink, CashfreeError } from '@/lib/cashfree/client';
 
 export const runtime = 'nodejs';
 
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
     // Load EMI + student
     const { data: emi } = await admin
       .from('emi_schedule')
-      .select('id, amount, due_date, installment_no, installments_total, student_id, status')
+      .select('id, amount, due_date, installment_no, installments_total, student_id, status, cashfree_link_id, cashfree_link_status')
       .eq('id', emiId)
       .maybeSingle();
     if (!emi) {
@@ -114,6 +114,32 @@ export async function POST(req: Request) {
     const proto = req.headers.get('x-forwarded-proto') ?? 'https';
     const host = req.headers.get('host') ?? '';
     const notifyUrl = `${proto}://${host}/api/cashfree/webhook`;
+
+    // If a previous link exists and is still ACTIVE, cancel it first so the customer
+    // can't pay an orphaned link whose webhook wouldn't match this EMI any more.
+    // Best-effort: if cancel fails (already paid/expired/etc), proceed anyway.
+    const prevLinkId = (emi as any).cashfree_link_id as string | null;
+    const prevStatus = (emi as any).cashfree_link_status as string | null;
+    if (prevLinkId && prevStatus === 'ACTIVE') {
+      try {
+        await cancelPaymentLink({ appId, secretKey, env }, prevLinkId);
+        await admin.from('cashfree_events').insert({
+          emi_id: emiId,
+          student_id: (emi as any).student_id,
+          event_type: 'link_cancelled',
+          cashfree_link_id: prevLinkId,
+          payload: { reason: 'superseded_by_regeneration' },
+        } as any);
+      } catch (e: any) {
+        await admin.from('cashfree_events').insert({
+          emi_id: emiId,
+          student_id: (emi as any).student_id,
+          event_type: 'link_cancel_failed',
+          cashfree_link_id: prevLinkId,
+          error: e?.message ?? 'unknown',
+        } as any);
+      }
+    }
 
     // Call Cashfree
     let link;

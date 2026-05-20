@@ -219,6 +219,24 @@ function describeEvent(event: CashfreeEvent): {
         tone: { bg: 'bg-rose-100', text: 'text-rose-700' },
         detail: payload.amount ? `Failed payment of ${fmtINR(Number(payload.amount))}` : null,
       };
+
+    case 'link_cancelled':
+      return {
+        icon: <XCircle className="w-4 h-4" />,
+        label: 'Payment Link Cancelled',
+        tone: { bg: 'bg-ink-100', text: 'text-ink-700' },
+        detail: payload.reason === 'superseded_by_regeneration'
+          ? 'Cancelled because a new link was generated for this EMI'
+          : null,
+      };
+
+    case 'link_cancel_failed':
+      return {
+        icon: <AlertTriangle className="w-4 h-4" />,
+        label: 'Link Cancel Failed',
+        tone: { bg: 'bg-amber-100', text: 'text-amber-700' },
+        detail: 'Previous link could not be cancelled before regenerating (may already be paid or expired)',
+      };
     
     default:
       return {
