@@ -27,12 +27,14 @@ export function StudentsTable({
   initialFilter = 'all',
   lastCallByStudent = {},
   lastPaymentByStudent = {},
+  emiStatusByStudent = {},
 }: {
   initialStudents: Row[];
   totalCount: number;
   initialFilter?: InitialFilter;
   lastCallByStudent?: Record<string, string>;
   lastPaymentByStudent?: Record<string, { mode: string; date: string }>;
+  emiStatusByStudent?: Record<string, { paid: number; total: number; overdue: number; upcoming: number }>;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -44,6 +46,13 @@ export function StudentsTable({
     initialFilter !== 'all' ? new Set([initialFilter]) : new Set()
   );
   const [tagSel, setTagSel] = useState<Set<string>>(new Set());
+  const [emiFilter, setEmiFilter] = useState<Set<string>>(new Set());
+  const [certFilter, setCertFilter] = useState<Set<string>>(new Set());
+  // Progress filter — numeric thresholds. "" = no filter, "3" = student must have ≥3 months done
+  const [monthsDone, setMonthsDone] = useState<string>('');
+  const [totalMonths, setTotalMonths] = useState<string>('6');
+  const [weeksDone, setWeeksDone] = useState<string>('');
+  const [totalWeeks, setTotalWeeks] = useState<string>('24');
   const sb = useMemo(() => supabaseBrowser(), []);
 
   useEffect(() => { setStudents(initialStudents); }, [initialStudents]);
@@ -89,11 +98,49 @@ export function StudentsTable({
       if (memberships.size > 0 && !(s.membership && memberships.has(s.membership))) return false;
       if (statuses.size > 0 && !statuses.has(studentStatusFromEnd(s.end_date) as StatusKey)) return false;
       if (tagSel.size > 0 && ![...achievementTags(s as any), ...(s.tags ?? [])].some((t) => tagSel.has(t))) return false;
+
+      if (emiFilter.size > 0) {
+        const emi = emiStatusByStudent[s.id];
+        if (!emi) return false;
+        const isFullyPaid = emi.total > 0 && emi.paid === emi.total;
+        const hasOverdue = emi.overdue > 0;
+        const hasDue = emi.upcoming > 0 && !hasOverdue;
+        const matches =
+          (emiFilter.has('paid') && isFullyPaid) ||
+          (emiFilter.has('due') && hasDue) ||
+          (emiFilter.has('overdue') && hasOverdue);
+        if (!matches) return false;
+      }
+
+      const monthsCount = [
+        (s as any).month_1, (s as any).month_2, (s as any).month_3,
+        (s as any).month_4, (s as any).month_5, (s as any).month_6,
+      ].filter(Boolean).length;
+      const weeksCount = monthsCount * 4;
+
+      if (monthsDone.trim() !== '') {
+        const required = parseInt(monthsDone) || 0;
+        if (monthsCount < required) return false;
+      }
+      if (weeksDone.trim() !== '') {
+        const required = parseInt(weeksDone) || 0;
+        if (weeksCount < required) return false;
+      }
+
+      if (certFilter.size > 0) {
+        const sixDone = monthsCount === 6;
+        const certIssued = !!(s as any).certificate_issued;
+        const matches =
+          (certFilter.has('issued') && certIssued) ||
+          (certFilter.has('pending') && sixDone && !certIssued);
+        if (!matches) return false;
+      }
+
       return true;
     });
-  }, [students, query, memberships, statuses, tagSel]);
+  }, [students, query, memberships, statuses, tagSel, emiFilter, monthsDone, weeksDone, certFilter, emiStatusByStudent]);
 
-  useEffect(() => { setPage(1); }, [query, memberships, statuses, tagSel]);
+  useEffect(() => { setPage(1); }, [query, memberships, statuses, tagSel, emiFilter, monthsDone, weeksDone, certFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -149,6 +196,35 @@ export function StudentsTable({
           ]}
           selected={statuses}
           onChange={setStatuses}
+        />
+        <FilterDropdown
+          label="EMI"
+          options={[
+            { value: 'paid',    label: '✓ Fully Paid' },
+            { value: 'due',     label: '○ Has Due' },
+            { value: 'overdue', label: '⚠ Has Overdue' },
+          ]}
+          selected={emiFilter}
+          onChange={setEmiFilter}
+        />
+        <ProgressFilterInput
+          monthsDone={monthsDone}
+          setMonthsDone={setMonthsDone}
+          totalMonths={totalMonths}
+          setTotalMonths={setTotalMonths}
+          weeksDone={weeksDone}
+          setWeeksDone={setWeeksDone}
+          totalWeeks={totalWeeks}
+          setTotalWeeks={setTotalWeeks}
+        />
+        <FilterDropdown
+          label="Certificate"
+          options={[
+            { value: 'issued',  label: '✓ Issued' },
+            { value: 'pending', label: '⏳ Pending' },
+          ]}
+          selected={certFilter}
+          onChange={setCertFilter}
         />
         <div className="ml-auto text-[12px] text-ink-500">
           Showing <span className="font-medium text-ink-900">{filtered.length}</span> of {totalCount}
@@ -308,6 +384,100 @@ function pageNumbers(current: number, total: number): Array<number | '…'> {
   if (current < total - 2) out.push('…');
   out.push(total);
   return out;
+}
+
+function ProgressFilterInput({
+  monthsDone, setMonthsDone, totalMonths, setTotalMonths,
+  weeksDone, setWeeksDone, totalWeeks, setTotalWeeks,
+}: {
+  monthsDone: string; setMonthsDone: (v: string) => void;
+  totalMonths: string; setTotalMonths: (v: string) => void;
+  weeksDone: string; setWeeksDone: (v: string) => void;
+  totalWeeks: string; setTotalWeeks: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const isActive = monthsDone.trim() !== '' || weeksDone.trim() !== '';
+  let badge = '';
+  if (monthsDone) badge += `${monthsDone}/${totalMonths}m`;
+  if (weeksDone) badge += (badge ? ' · ' : '') + `${weeksDone}/${totalWeeks}w`;
+
+  function clear() { setMonthsDone(''); setWeeksDone(''); }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'h-9 px-3 rounded-lg border text-[12.5px] font-medium flex items-center gap-1.5 hover:bg-ink-50',
+          isActive ? 'border-accent-500 text-accent-700 bg-accent-50' : 'border-ink-200 text-ink-700'
+        )}
+      >
+        Progress
+        {badge && <span className="text-[11px] bg-accent-100 text-accent-700 rounded px-1.5">{badge}</span>}
+        <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+4px)] w-[280px] bg-white border border-ink-200/80 shadow-pop rounded-lg z-30 p-3">
+          <div className="text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-2">Months completed</div>
+          <div className="flex items-center gap-1.5 mb-3">
+            <input
+              type="number" min={0} max={6} step={1}
+              value={monthsDone}
+              onChange={(e) => setMonthsDone(e.target.value)}
+              placeholder="Any"
+              className="w-16 h-8 px-2 border border-ink-200 rounded text-[13px] text-center focus:outline-none focus:border-accent-400"
+            />
+            <span className="text-[12px] text-ink-500">of</span>
+            <input
+              type="number" min={1} max={12} step={1}
+              value={totalMonths}
+              onChange={(e) => setTotalMonths(e.target.value)}
+              className="w-16 h-8 px-2 border border-ink-200 rounded text-[13px] text-center focus:outline-none focus:border-accent-400"
+            />
+            <span className="text-[11px] text-ink-500 ml-1">months</span>
+          </div>
+
+          <div className="text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-2">Weeks completed</div>
+          <div className="flex items-center gap-1.5 mb-3">
+            <input
+              type="number" min={0} max={24} step={1}
+              value={weeksDone}
+              onChange={(e) => setWeeksDone(e.target.value)}
+              placeholder="Any"
+              className="w-16 h-8 px-2 border border-ink-200 rounded text-[13px] text-center focus:outline-none focus:border-accent-400"
+            />
+            <span className="text-[12px] text-ink-500">of</span>
+            <input
+              type="number" min={1} max={52} step={1}
+              value={totalWeeks}
+              onChange={(e) => setTotalWeeks(e.target.value)}
+              className="w-16 h-8 px-2 border border-ink-200 rounded text-[13px] text-center focus:outline-none focus:border-accent-400"
+            />
+            <span className="text-[11px] text-ink-500 ml-1">weeks</span>
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] text-ink-500 pt-2 border-t border-ink-100">
+            <span>Shows students with ≥ entered value</span>
+            {isActive && (
+              <button onClick={clear} className="text-accent-600 hover:text-accent-700 font-medium">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FilterDropdown<T extends string = string>({
