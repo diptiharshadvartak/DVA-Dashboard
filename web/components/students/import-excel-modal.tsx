@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { UploadCloud, FileSpreadsheet, CheckCircle2, X, Info, AlertTriangle } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, CheckCircle2, X, AlertTriangle, Download } from 'lucide-react';
 import { useToast } from '@/components/shell/toast-region';
 
 // Types of rows we can parse
@@ -201,6 +201,33 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
   const rows = detected === 'emi' ? emiRows : masterRows;
   const totalRows = rows.length;
 
+  // Generate + download a sample CSV template with the exact columns the importer expects
+  function downloadSample() {
+    const headers = [
+      'Email Id','Name','Surname','Mobile Number','Membership','Tags','Course Start Date','Course End Date',
+      'Due Date','EMI amount','EMI','Payment Mode',
+      'Month 1','Month 2','Month 3','Month 4','Month 5','Month 6',
+      'SBF','Hall of Fame','Certificate','Certificate Date','BBR2','BBR Date',
+      'Remarks','Call Date','Call Remarks',
+    ];
+    const rows = [
+      ['anjali@gmail.com','Anjali','Sharma','9876543210','Diamond','S','01 Jan 2025','30 Jun 2025','15 Feb 2027','12222','15/15','Card','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','20 May 2026','BBR2','18 May 2026','Graduated. Excellent baker.','15 May 2026','Final review - completed everything'],
+      ['rohan@gmail.com','Rohan','Verma','9123456789','Diamond','SDC','15 Feb 2025','15 Aug 2025','20 Mar 2026','10000','3/6','NEFT','TRUE','TRUE','TRUE','TRUE','TRUE','FALSE','FALSE','FALSE','FALSE','','BBR-ABSENT','','On track, missed BBR.','10 May 2026','Discussed month 6 plan'],
+      ['meera@gmail.com','Meera','Iyer','9988776655','Diamond','J','10 Apr 2025','10 Oct 2025','15 Apr 2026','5000','1/9','UPI','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','','','Just started.','01 Apr 2026','Onboarding call, enthusiastic'],
+    ];
+    const escape = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const csv = [headers, ...rows].map((r) => r.map((c) => escape(String(c))).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'DVA_Student_Import_Sample.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center px-4">
       <div onClick={onClose} className="absolute inset-0 bg-ink-950/40" />
@@ -222,18 +249,6 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
           </div>
 
           <div className="space-y-4">
-            <div className="bg-blue-50/60 border border-blue-200 rounded-lg p-3 text-[12px] text-blue-900 flex gap-2">
-              <Info className="w-4 h-4 shrink-0 mt-0.5" />
-              <div>
-                <div className="font-semibold mb-1">Smart detection:</div>
-                <div className="text-[11.5px] leading-relaxed">
-                  Has <code>EMI</code> + <code>EMI amount</code> columns → treated as EMI Tracker (creates payment plans)<br/>
-                  Has <code>Month 1-6</code> columns → treated as Master Sheet (profile + progress)<br/>
-                  Both never touch existing EMI/payment data when updating students
-                </div>
-              </div>
-            </div>
-
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFile} className="hidden" />
             <button
               onClick={() => fileRef.current?.click()}
@@ -243,6 +258,15 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
               <div>{fileName ? <span className="font-medium">{fileName}</span> : 'Click to choose Excel file'}</div>
               <div className="text-[11px] text-ink-400">.xlsx, .xls, or .csv</div>
             </button>
+
+            <div className="flex items-center justify-center gap-1.5 text-[12px] text-ink-500">
+              <Download className="w-3.5 h-3.5" />
+              <span>First time?</span>
+              <button onClick={downloadSample} className="text-blue-600 hover:text-blue-700 font-medium underline underline-offset-2">
+                Download sample CSV
+              </button>
+              <span>to see the format.</span>
+            </div>
 
             {/* Detection result */}
             {fileName && detected !== 'unknown' && (
