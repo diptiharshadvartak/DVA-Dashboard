@@ -116,9 +116,10 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
 
       if (type === 'unknown') {
         setErrors([
-          `Couldn't detect file type. Expected columns:`,
-          `EMI Tracker: Email Id, Name, Mobile Number, Due Date, EMI amount, EMI`,
-          `Master Sheet: Email, First Name, Mobile Number, Membership, Month 1-6`,
+          `Couldn't detect file type.`,
+          `Columns found in your file: ${columns.join(', ')}`,
+          `Need either: "EMI amount" + "EMI"  (for payments)`,
+          `Or: "Month 1", "Month 2", "Month 3"  (for progress)`,
         ]);
         return;
       }
@@ -618,18 +619,48 @@ function parseDate(v: any): string | null {
     return `${y}-${m}-${d}`;
   }
   const s = v.toString().trim();
+  if (!s) return null;
+
+  // ISO: 2026-04-15
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+
+  // Text month: "15 Feb 2027" or "Feb 15 2027"
   const months: Record<string, string> = {
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
   };
-  const m1 = s.match(/^(\d{1,2})\s+(\w+)\s+(\d{4})$/);
+  const m1 = s.match(/^(\d{1,2})\s+(\w+)\s+(\d{4})$/);  // 15 Feb 2027
   if (m1) {
     const day = m1[1].padStart(2, '0');
     const mon = months[m1[2].substring(0, 3).toLowerCase()];
     if (mon) return `${m1[3]}-${mon}-${day}`;
   }
-  const m2 = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
-  if (m2) return `${m2[3]}-${m2[2].padStart(2, '0')}-${m2[1].padStart(2, '0')}`;
+  const m1b = s.match(/^(\w+)\s+(\d{1,2}),?\s+(\d{4})$/);  // Feb 15, 2027
+  if (m1b) {
+    const mon = months[m1b[1].substring(0, 3).toLowerCase()];
+    const day = m1b[2].padStart(2, '0');
+    if (mon) return `${m1b[3]}-${mon}-${day}`;
+  }
+
+  // Slash/dash: handles 1/2/3 with 2- or 4-digit year, smart D/M vs M/D
+  const m2 = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (m2) {
+    let a = parseInt(m2[1], 10);   // first number
+    let b = parseInt(m2[2], 10);   // second number
+    let year = parseInt(m2[3], 10);
+    if (year < 100) year += 2000;  // 27 -> 2027
+
+    let day: number, mon: number;
+    if (a > 12) {            // a must be the day (D/M/Y)
+      day = a; mon = b;
+    } else if (b > 12) {     // b must be the day (M/D/Y) — e.g. 2/15/27
+      mon = a; day = b;
+    } else {                 // ambiguous (both <=12) -> assume D/M/Y (Indian)
+      day = a; mon = b;
+    }
+    if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
   return null;
 }
