@@ -58,6 +58,8 @@ export async function createPaymentLink(
       customer_phone: args.customerPhone,
       ...(args.customerEmail ? { customer_email: args.customerEmail } : {}),
     },
+    // Auto-send disabled: Cashfree does NOT message the student. The coach
+    // copies/shares the generated link manually instead.
     link_notify: {
       send_sms: false,
       send_email: false,

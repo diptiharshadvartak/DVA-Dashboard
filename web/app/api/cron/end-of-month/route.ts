@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { denyIfNotCron } from '@/lib/cron-auth';
 
 // Vercel Cron — last days of month, 23:55 IST → UTC 18:25
 // Fires `course.month_pending` for students whose current month checkbox is not yet ticked.
@@ -7,12 +8,8 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 export async function GET(req: Request) {
-  const auth = req.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    if (req.headers.get('user-agent') !== 'vercel-cron/1.0') {
-      return new NextResponse('forbidden', { status: 403 });
-    }
-  }
+  const denied = denyIfNotCron(req);
+  if (denied) return denied;
 
   // Only fire on the actual last day of the month
   const today = new Date();

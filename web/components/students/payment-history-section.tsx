@@ -107,14 +107,6 @@ export function PaymentHistorySection({ studentId }: { studentId: string }) {
           {displayEvents.map((event) => (
             <EventRow key={event.id} event={event} />
           ))}
-          {!expanded && events.length > 5 && (
-            <button
-              onClick={() => setExpanded(true)}
-              className="w-full px-4 py-2.5 text-[12px] text-accent-700 hover:bg-accent-50/40 font-medium border-t border-ink-100"
-            >
-              Show all {events.length} events →
-            </button>
-          )}
         </div>
       )}
     </div>

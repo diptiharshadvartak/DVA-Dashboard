@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { verifyWebhookSignature } from '@/lib/cashfree/client';
+import { istDateString } from '@/lib/utils';
 
 export const runtime = 'nodejs';
 
@@ -42,12 +43,16 @@ export async function POST(req: Request) {
       return new NextResponse('Invalid signature', { status: 401 });
     }
   } else {
-    console.warn('[cashfree webhook] No webhook secret configured — processing unverified request');
+    // No secret configured → we cannot trust this request. Log it but do NOT
+    // process it (previously it fell through and could auto-mark EMIs paid from
+    // an unauthenticated caller). Configure cashfree_webhook_secret to enable.
+    console.warn('[cashfree webhook] No webhook secret configured — ignoring unverified request');
     await admin.from('cashfree_events').insert({
       event_type: 'webhook_unverified',
       payload: { rawBody: rawBody.substring(0, 500) },
-      error: 'No webhook secret configured',
+      error: 'No webhook secret configured — set cashfree_webhook_secret to enable auto-mark-paid',
     } as any);
+    return NextResponse.json({ ok: true, note: 'webhook secret not configured; request ignored' });
   }
 
   let parsed: any;
@@ -125,11 +130,13 @@ export async function POST(req: Request) {
   // failed-payment-attempts where data.payment.payment_status === 'FAILED'.
   // Require either an explicit PAID link_status, or an order/payment status
   // that's actually a success terminal.
+  // Require a recognized success event — NOT a bare order/payment status, which
+  // previously let any event with status PAID/SUCCESS (even a link-status event
+  // for an unrelated state) mark the EMI paid.
   const orderOrPaymentSuccess = orderStatus === 'PAID' || orderStatus === 'SUCCESS';
   const isPaymentSuccess =
     (eventType === 'PAYMENT_LINK_EVENT' && linkStatus === 'PAID')
-    || (eventType === 'PAYMENT_SUCCESS_WEBHOOK' && orderOrPaymentSuccess)
-    || orderOrPaymentSuccess;
+    || (eventType === 'PAYMENT_SUCCESS_WEBHOOK' && orderOrPaymentSuccess);
 
   if (isPaymentSuccess) {
     // Atomic: only mark paid + log audit if this EMI wasn't already paid.
@@ -138,7 +145,7 @@ export async function POST(req: Request) {
     // duplicate audit rows. Conditioning the UPDATE on the DB side serializes them.
     const update: Record<string, any> = {
       status: 'paid',
-      paid_date: new Date().toISOString().slice(0, 10),
+      paid_date: istDateString(),
       payment_mode: 'Cashfree',
     };
     // Only overwrite payment_link if Cashfree actually included one in this event —

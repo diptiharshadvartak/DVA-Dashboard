@@ -89,6 +89,39 @@ export function normalizePhone(
   // Anything else: best-effort prepend +.
   return '+' + s;
 }
+
+// Current calendar date in IST (UTC+5:30) as YYYY-MM-DD. The app's domain is
+// India; computing "today" with new Date().toISOString() uses UTC, which is the
+// previous calendar day between 18:30–24:00 IST — causing date-boundary
+// off-by-one bugs in EMI statuses, paid dates, and cron sweeps.
+export function istDateString(d: Date = new Date()): string {
+  return new Date(d.getTime() + 5.5 * 3600_000).toISOString().slice(0, 10);
+}
+
+// Split an array into fixed-size chunks. Used to keep PostgREST .in(...) lists
+// small — Supabase encodes them into the request URL and a few hundred ids
+// overflow the URL length limit and make the whole request fail.
+export function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// Fetch every row from a PostgREST select, paging past the default 1000-row
+// cap. `makeQuery(from, to)` must apply a STABLE order (e.g. .order('id')) and
+// .range(from, to) so paging can't skip or duplicate rows.
+export async function selectAllRows<T = any>(
+  makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await makeQuery(from, from + 999);
+    if (!data || data.length === 0) break;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
 // Achievement labels shown as tags. Computed from achievement fields so they
 // always stay in sync with the student's actual achievement state.
 export function achievementTags(s: {

@@ -12,6 +12,7 @@ import { EmiSetupModal } from './emi-setup-modal';
 import { MarkPaidModal } from './mark-paid-modal';
 import { EditPaymentModal } from './edit-payment-modal';
 import { ChangePaymentLinkModal } from './change-payment-link-modal';
+import { CollectPaymentModal } from './collect-payment-modal';
 import { PaymentHistorySection } from './payment-history-section';
 import type { Database } from '@/types/database';
 
@@ -33,6 +34,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const [setupOpen, setSetupOpen] = useState(false);
   const [editEmi, setEditEmi] = useState<Emi | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [collectOpen, setCollectOpen] = useState(false);
   const [busyCashfree, setBusyCashfree] = useState<string | null>(null);
   const [paymentIdsByEmi, setPaymentIdsByEmi] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
@@ -97,6 +99,12 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
 
   const planTotal = totalEmi + downPayment;
   const mismatch = totalFee > 0 ? totalFee - planTotal : 0;
+  const nextInstallmentNo = rows.reduce((m, r) => Math.max(m, Number(r.installment_no) || 0), 0) + 1;
+  // Balance already covered by unpaid installments on the plan. "Collect
+  // payment" should default to what's NOT yet scheduled, so it doesn't add a
+  // redundant installment for money that's already on the plan.
+  const scheduledUnpaid = rows.filter(r => r.status !== 'paid').reduce((s, r) => s + Number(r.amount), 0);
+  const collectable = Math.max(0, outstanding - scheduledUnpaid);
 
   if (!loaded) return <div className="text-[13px] text-ink-500">Loading…</div>;
 
@@ -128,6 +136,13 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
         <Kpi label="Down payment" value={fmtINR(downPayment)} sub={student?.down_payment_date ? `paid ${fmtDate(student.down_payment_date)}` : downPayment > 0 ? 'paid' : 'not set'} tone={downPayment > 0 ? 'good' : 'neutral'} onEdit={() => setSetupOpen(true)} />
         <Kpi label="Paid so far" value={fmtINR(totalPaid)} sub={`${rows.filter(r=>r.status==='paid').length} of ${rows.length} EMIs paid`} tone="good" />
         <Kpi label="Outstanding" value={fmtINR(outstanding)} sub={rows.filter(r => r.status !== 'paid').length + ' EMIs left'} tone={outstanding > 0 ? 'warn' : 'good'} />
+      </div>
+
+      {/* Collect a payment toward the balance with an editable amount */}
+      <div className="flex justify-end">
+        <Button variant="primary" onClick={() => setCollectOpen(true)}>
+          <IndianRupee className="w-4 h-4" /> Collect payment
+        </Button>
       </div>
 
       {Math.abs(mismatch) > 1 && (
@@ -361,6 +376,17 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
         />
       )}
       {setupOpen && <EmiSetupModal studentId={studentId} onClose={() => setSetupOpen(false)} onSaved={load} />}
+      {collectOpen && (
+        <CollectPaymentModal
+          open={collectOpen}
+          onClose={() => setCollectOpen(false)}
+          onSaved={load}
+          studentId={studentId}
+          outstanding={outstanding}
+          defaultAmount={collectable}
+          nextInstallmentNo={nextInstallmentNo}
+        />
+      )}
 
       <PaymentHistorySection studentId={studentId} />
     </div>

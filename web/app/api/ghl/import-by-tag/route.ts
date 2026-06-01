@@ -62,6 +62,15 @@ export async function POST(req: Request) {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return new NextResponse('unauthenticated', { status: 401 });
 
+  // Bulk-writes the students table (insert/update by email) — gate to admins /
+  // coaches with the students permission, not just any signed-in user.
+  const { data: profile } = await sb.from('profiles').select('role, permissions').eq('id', user.id).maybeSingle();
+  const isAdmin = (profile as any)?.role === 'admin';
+  const perms = ((profile as any)?.permissions ?? []) as string[];
+  if (!isAdmin && !perms.includes('students')) {
+    return new NextResponse('forbidden — admin or students permission required', { status: 403 });
+  }
+
   const { tag } = (await req.json()) as { tag: string };
   if (!tag) return new NextResponse('tag required', { status: 400 });
 

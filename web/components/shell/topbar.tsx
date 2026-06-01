@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Bell, Moon, Sun, Search, Settings, LogOut, ChevronDown, TriangleAlert, Clock, UserX, CheckCircle2, CalendarClock, ArrowRight } from 'lucide-react';
-import { cn, fmtINR } from '@/lib/utils';
+import { cn, fmtINR, istDateString } from '@/lib/utils';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { useTheme } from '@/components/shell/theme-provider';
 import { useCommandPalette } from '@/components/shell/command-palette';
@@ -72,7 +72,7 @@ export function Topbar({ user }: { user: SessionUser }) {
 
   async function refresh() {
     setLoading(true);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = istDateString();
     try {
       const [overdueRows, followupsQuery, silentCount, expiringSoon] = await Promise.all([
         sb.from('emi_schedule').select('amount').eq('status', 'overdue'),
@@ -86,8 +86,10 @@ export function Topbar({ user }: { user: SessionUser }) {
         sb.from('v_students_silent_30d').select('id', { count: 'exact', head: true }),
         sb.from('students')
           .select('id', { count: 'exact', head: true })
-          .gte('end_date', today)
-          .lte('end_date', new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10))
+          // Use course_end_date — the field the Students "Expiring" filter uses —
+          // so this badge matches the list it links to.
+          .gte('course_end_date', today)
+          .lte('course_end_date', istDateString(new Date(Date.now() + 14 * 86400000)))
           .is('deleted_at', null),
       ]);
       const rows = (overdueRows.data ?? []) as any[];

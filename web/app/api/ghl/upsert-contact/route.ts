@@ -12,6 +12,15 @@ export async function POST(req: Request) {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return new NextResponse('unauthenticated', { status: 401 });
 
+  // Reads a student's PII and pushes it to GHL — gate to admins / coaches with
+  // the students permission, not just any signed-in user.
+  const { data: profile } = await sb.from('profiles').select('role, permissions').eq('id', user.id).maybeSingle();
+  const isAdmin = (profile as any)?.role === 'admin';
+  const perms = ((profile as any)?.permissions ?? []) as string[];
+  if (!isAdmin && !perms.includes('students')) {
+    return new NextResponse('forbidden — admin or students permission required', { status: 403 });
+  }
+
   const { studentId } = (await req.json()) as { studentId: string };
   if (!studentId) return new NextResponse('studentId required', { status: 400 });
 

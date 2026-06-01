@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { FollowupsClient } from './followups-client';
 import { requirePermission } from '@/lib/check-permission';
+import { chunk } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,14 +27,20 @@ export default async function FollowUpsPage() {
   const studentIds = Array.from(new Set(allRows.map((r) => r.student_id)));
   const latestCallPerStudent: Record<string, string> = {};
   if (studentIds.length > 0) {
-    const { data: allCalls } = await sb
-      .from('call_logs')
-      .select('student_id, created_at')
-      .in('student_id', studentIds);
-    for (const c of ((allCalls ?? []) as any[])) {
-      const cur = latestCallPerStudent[c.student_id];
-      if (!cur || new Date(c.created_at).getTime() > new Date(cur).getTime()) {
-        latestCallPerStudent[c.student_id] = c.created_at;
+    // Query in batches — a single .in() with hundreds of ids overflows the
+    // request URL and fails outright (this is the same bug that blanked the
+    // Students table). Each id is in one batch, so the merge stays correct.
+    const callResults = await Promise.all(
+      chunk(studentIds, 50).map((ids) =>
+        sb.from('call_logs').select('student_id, created_at').in('student_id', ids)
+      )
+    );
+    for (const { data: allCalls } of callResults) {
+      for (const c of ((allCalls ?? []) as any[])) {
+        const cur = latestCallPerStudent[c.student_id];
+        if (!cur || new Date(c.created_at).getTime() > new Date(cur).getTime()) {
+          latestCallPerStudent[c.student_id] = c.created_at;
+        }
       }
     }
   }

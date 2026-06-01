@@ -1,17 +1,14 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { sweepEmiRemindersDue, sweepSilentStudents, sweepFollowupsDue } from '@/lib/events';
+import { denyIfNotCron } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 export async function GET(req: Request) {
-  const auth = req.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    if (req.headers.get('user-agent') !== 'vercel-cron/1.0') {
-      return new NextResponse('forbidden', { status: 403 });
-    }
-  }
+  const denied = denyIfNotCron(req);
+  if (denied) return denied;
 
   const sb = supabaseAdmin();
   await sb.rpc('refresh_emi_statuses' as any);

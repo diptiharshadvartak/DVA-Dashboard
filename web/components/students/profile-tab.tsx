@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pencil, Check, X, Sparkles } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase/client';
-import { fmtDate, achievementTags } from '@/lib/utils';
+import { fmtDate, fmtINR, achievementTags, cn } from '@/lib/utils';
 import { VoiceButton } from './voice-button';
+import { EmiSetupModal } from './emi-setup-modal';
 import { useToast } from '@/components/shell/toast-region';
 import type { Database } from '@/types/database';
 
@@ -19,8 +20,50 @@ const MEMBERSHIP_OPTIONS = [
   'Ex-💎', 'R💎 Deposit', 'on hold 💎 Dep', 'Settled',
 ];
 
-export function ProfileTab({ student }: { student: Student }) {
+export function ProfileTab({ student, onChange }: { student: Student; onChange?: (patch: Partial<Student>) => void }) {
   const sb = supabaseBrowser();
+  const [emiPaid, setEmiPaid] = useState<number>(0);
+  const [emiCount, setEmiCount] = useState<{ paid: number; total: number }>({ paid: 0, total: 0 });
+  const [paidInstallments, setPaidInstallments] = useState<{ amount: number; date: string | null; mode: string | null }[]>([]);
+  // Lets the user edit the fee / down payment / EMI plan right from the
+  // Profile tab (same modal the Payments tab uses). payRefresh forces the
+  // summary below to re-fetch after a save, even when the change is one the
+  // student-row realtime sub doesn't cover (e.g. only emi_schedule changed).
+  const [editPayOpen, setEditPayOpen] = useState(false);
+  const [payRefresh, setPayRefresh] = useState(0);
+
+  // Fetch payment summary + individual paid installments from emi_schedule
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb
+        .from('emi_schedule')
+        .select('amount, status, paid_date, payment_mode, installment_no')
+        .eq('student_id', student.id)
+        .order('installment_no', { ascending: true });
+      let paid = 0, paidCount = 0, total = 0;
+      const list: { amount: number; date: string | null; mode: string | null }[] = [];
+      for (const e of (data ?? []) as any[]) {
+        total++;
+        if (e.status === 'paid') {
+          paid += Number(e.amount ?? 0); paidCount++;
+          list.push({ amount: Number(e.amount ?? 0), date: e.paid_date, mode: e.payment_mode });
+        }
+      }
+      const fp = Number((student as any).full_payment_amount ?? 0);
+      if (fp > 0 && total === 0) { paid = fp; paidCount = 1; total = 1; }
+      // The down payment is stored on the student record (not as an
+      // emi_schedule row in the EMI-ratio import path), so it must be added to
+      // the paid total — otherwise "Total paid"/"Outstanding" here disagree
+      // with the Payments tab, which already counts it (paidEmi + downPayment).
+      const dp = Number((student as any).down_payment ?? 0);
+      // Count the down payment as a payment too, so the installment count
+      // reconciles with the rupee total (which already includes it).
+      if (dp > 0) { paid += dp; paidCount++; total++; }
+      setEmiPaid(paid);
+      setEmiCount({ paid: paidCount, total });
+      setPaidInstallments(list);
+    })();
+  }, [student.id, sb, (student as any).full_payment_amount, (student as any).down_payment, payRefresh]);
   const { toast } = useToast();
 
   const [bg, setBg] = useState(student.background ?? '');
@@ -69,6 +112,7 @@ export function ProfileTab({ student }: { student: Student }) {
     const { error } = await sb.from('students').update({ background: newValue }).eq('id', student.id);
     if (error) { toast(error.message, 'error'); return; }
     setSavedBg(newValue);
+    onChange?.({ background: newValue });
     setEditingBg(false);
     toast('Saved', 'success');
   }
@@ -78,29 +122,37 @@ export function ProfileTab({ student }: { student: Student }) {
     const { error } = await sb.from('students').update({ dipti_comments: newValue } as any).eq('id', student.id);
     if (error) { toast(error.message, 'error'); return; }
     setSavedDiptiNotes(newValue);
+    onChange?.({ dipti_comments: newValue });
     setEditingDipti(false);
     toast("Dipti's notes saved", 'success');
   }
 
   async function saveIdentity() {
-    const { error } = await sb.from('students').update({
+    const patch = {
       first_name: firstName.trim() || null,
       last_name: lastName.trim() || null,
       email: email.trim().toLowerCase(),
       mobile: mobile.trim() || null,
-    }).eq('id', student.id);
+    };
+    const { error } = await sb.from('students').update(patch).eq('id', student.id);
     if (error) { toast(error.message, 'error'); return; }
+    // Push the saved values up so the displayed prop updates immediately.
+    // Without this the Identity fields read from the stale `student` prop and
+    // revert to the old value when edit mode closes.
+    onChange?.(patch);
     setEditingIdentity(false);
     toast('Identity updated', 'success');
   }
 
   async function saveProgram() {
-    const { error } = await sb.from('students').update({
+    const patch = {
       membership: membership.trim() || null,
       course_start_date: startDate || null,
       course_end_date: endDate || null,
-    }).eq('id', student.id);
+    };
+    const { error } = await sb.from('students').update(patch).eq('id', student.id);
     if (error) { toast(error.message, 'error'); return; }
+    onChange?.(patch as Partial<Student>);
     setEditingProgram(false);
     toast('Program updated', 'success');
   }
@@ -123,7 +175,7 @@ export function ProfileTab({ student }: { student: Student }) {
 
   return (
     <div className="space-y-7">
-      {/* DIPTI'S NOTES — high contrast, theme-agnostic */}
+      {/* DIPTI'S NOTES */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-[12px] uppercase tracking-wider font-bold flex items-center gap-1.5 text-ink-900">
@@ -174,6 +226,10 @@ export function ProfileTab({ student }: { student: Student }) {
           <EditableField label="Last name" editing={editingIdentity} value={lastName} display={student.last_name ?? '—'} onChange={setLastName} />
           <EditableField label="Email" editing={editingIdentity} value={email} display={student.email} type="email" onChange={setEmail} />
           <EditableField label="Mobile" editing={editingIdentity} value={mobile} display={student.mobile ?? '—'} type="tel" onChange={setMobile} />
+          <Field label="Alternate number" value={(student as any).alternate_number ?? '—'} />
+          <Field label="Profile link" value={(student as any).profile_link
+            ? <a href={(student as any).profile_link} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate inline-block max-w-[260px]">{(student as any).profile_link}</a>
+            : '—'} />
         </div>
       </div>
 
@@ -197,10 +253,68 @@ export function ProfileTab({ student }: { student: Student }) {
           <Field label="Tags" value={(achievementTags(student as any).length || student.tags?.length)
             ? <>{achievementTags(student as any).map((t) => <span key={t} className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 mr-1">{t}</span>)}{(student.tags ?? []).map((t) => <span key={t} className="text-[10.5px] font-medium px-1.5 py-0.5 rounded bg-ink-100 text-ink-700 mr-1">{t}</span>)}</>
             : <span className="text-ink-400">none</span>} />
+          <Field label="Group" value={(student as any).student_group ?? '—'} />
           <EditableField label="Course start date" editing={editingProgram} value={startDate} display={fmtDate((student as any).course_start_date)} type="date" onChange={setStartDate} />
           <EditableField label="Course end date" editing={editingProgram} value={endDate} display={fmtDate((student as any).course_end_date)} type="date" onChange={setEndDate} />
         </div>
       </div>
+
+      {/* PAYMENTS SUMMARY (auto-computed) */}
+      {(() => {
+        const totalFee = Number(student.total_fee ?? 0);
+        const outstanding = Math.max(0, totalFee - emiPaid);
+        const status = (
+          totalFee === 0 ? 'No fee set' :
+          outstanding === 0 && emiPaid > 0 ? 'Fully Paid' :
+          emiPaid > 0 ? 'Partially Paid' :
+          'Not Started'
+        );
+        const statusColor = (
+          status === 'Fully Paid' ? 'bg-emerald-100 text-emerald-800' :
+          status === 'Partially Paid' ? 'bg-amber-100 text-amber-800' :
+          status === 'Not Started' ? 'bg-ink-100 text-ink-600' :
+          'bg-ink-100 text-ink-500'
+        );
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[12px] uppercase tracking-wider text-ink-500 font-semibold">Payments</h3>
+              <button
+                onClick={() => setEditPayOpen(true)}
+                className="h-7 px-2.5 rounded-md text-[11.5px] font-medium border border-ink-200 hover:bg-ink-50 flex items-center gap-1"
+              >
+                <Pencil className="w-3 h-3" /> Edit
+              </button>
+            </div>
+            <div className="bg-white border border-ink-200/70 rounded-xl px-5">
+              <Field label="Status" value={<span className={cn('inline-flex items-center text-[11.5px] font-semibold px-2 py-0.5 rounded-full', statusColor)}>{status === 'Fully Paid' ? '✅ ' : status === 'Partially Paid' ? '⏳ ' : ''}{status}</span>} />
+              <Field label="Total fee" value={<span className="font-semibold">{fmtINR(totalFee)}</span>} />
+              <Field label="Total paid" value={<span className="font-semibold text-emerald-700">{fmtINR(emiPaid)} <span className="text-[11px] text-ink-500 font-normal ml-1">({emiCount.paid}/{emiCount.total} installments)</span></span>} />
+              <Field label="Outstanding" value={<span className={cn('font-semibold', outstanding > 0 ? 'text-rose-700' : 'text-ink-500')}>{fmtINR(outstanding)}</span>} />
+              {(student as any).down_payment ? (
+                <Field label="Down payment" value={<>{fmtINR((student as any).down_payment)} {(student as any).down_payment_date && <span className="text-[11px] text-ink-500 ml-2">on {fmtDate((student as any).down_payment_date)}</span>}</>} />
+              ) : null}
+              {(student as any).full_payment_amount ? (
+                <Field label="Full payment" value={<>{fmtINR((student as any).full_payment_amount)} {(student as any).full_payment_date && <span className="text-[11px] text-ink-500 ml-2">on {fmtDate((student as any).full_payment_date)}</span>}</>} />
+              ) : null}
+              {paidInstallments.length > 0 && (
+                <Field label="All payments" value={
+                  <div className="flex flex-col gap-0.5 py-1">
+                    {paidInstallments.map((p, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[12px]">
+                        <span className="font-medium text-ink-900">#{i+1}</span>
+                        <span className="font-semibold text-emerald-700">{fmtINR(p.amount)}</span>
+                        <span className="text-[11px] text-ink-500">{p.date ? fmtDate(p.date) : '—'}</span>
+                        {p.mode && <span className="text-[10.5px] text-ink-400">({p.mode})</span>}
+                      </div>
+                    ))}
+                  </div>
+                } />
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* BACKGROUND */}
       <div>
@@ -234,6 +348,14 @@ export function ProfileTab({ student }: { student: Student }) {
           </div>
         </div>
       </div>
+
+      {editPayOpen && (
+        <EmiSetupModal
+          studentId={student.id}
+          onClose={() => setEditPayOpen(false)}
+          onSaved={() => setPayRefresh((x) => x + 1)}
+        />
+      )}
     </div>
   );
 }

@@ -114,7 +114,7 @@ export function StudentSlideover() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-[20px] font-semibold tracking-tight">{student.first_name} {student.last_name}</h2>
-                      <StatusPill status={studentStatusFromEnd(student.end_date)} />
+                      <StatusPill status={studentStatusFromEnd((student as any).course_end_date ?? student.end_date)} />
                       {student.upgrade_flag && (
                         <span className="text-[10.5px] font-medium text-accent-700 bg-accent-50 ring-1 ring-inset ring-accent-100 px-2 py-0.5 rounded-full">
                           Upgrade candidate
@@ -147,7 +147,7 @@ export function StudentSlideover() {
  
               <div className="flex-1 overflow-auto">
                 <div className="px-7 py-6">
-                  {tab === 'profile' && <ProfileTab student={student} />}
+                  {tab === 'profile' && <ProfileTab student={student} onChange={patchStudent} />}
                   {tab === 'progress' && <ProgressTab student={student} onChange={patchStudent} />}
                   {tab === 'calls' && <CallsTab studentId={student.id} />}
                   {tab === 'payments' && <PaymentsTab studentId={student.id} />}

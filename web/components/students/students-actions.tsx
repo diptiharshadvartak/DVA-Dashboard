@@ -49,7 +49,7 @@ function AddStudentModal({ onClose, onCreated }: { onClose: () => void; onCreate
     first_name: '', last_name: '', email: '', mobile: '',
     membership: 'Diamond',
     start_date: new Date().toISOString().slice(0, 10), end_date: '',
-    tags: '',
+    student_group: '', tags: '',
   });
   function set<K extends keyof typeof form>(k: K, v: string) { setForm((f) => ({ ...f, [k]: v })); }
 
@@ -73,6 +73,7 @@ function AddStudentModal({ onClose, onCreated }: { onClose: () => void; onCreate
       membership: form.membership || null,
       start_date: form.start_date || null,
       end_date:   form.end_date   || null,
+      student_group: form.student_group.trim() || null,
       tags:       tagsArr,
     };
 
@@ -123,7 +124,10 @@ function AddStudentModal({ onClose, onCreated }: { onClose: () => void; onCreate
             <Field label="Start date"><input type="date" value={form.start_date} onChange={(e) => set('start_date', e.target.value)} className={fieldCls} /></Field>
             <Field label="End date"><input type="date" value={form.end_date} onChange={(e) => set('end_date', e.target.value)} className={fieldCls} /></Field>
           </div>
-          <Field label="Tags (comma-separated)"><input value={form.tags} onChange={(e) => set('tags', e.target.value)} className={fieldCls} placeholder="SH, BBR2" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Batch / Group"><input value={form.student_group} onChange={(e) => set('student_group', e.target.value)} className={fieldCls} placeholder="Batch A" /></Field>
+            <Field label="Tags (comma-separated)"><input value={form.tags} onChange={(e) => set('tags', e.target.value)} className={fieldCls} placeholder="SH, BBR2" /></Field>
+          </div>
         </div>
 
         {/* Toggle for EMI plan */}

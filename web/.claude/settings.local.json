@@ -6,7 +6,20 @@
       "Bash(npx tsc *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(node _debug_import.mjs)",
+      "Bash(echo \"EXIT=$?\")",
+      "PowerShell(\"flush-marker-123\")",
+      "Bash(node _diag.mjs)",
+      "Bash(node _diag2.mjs)",
+      "Bash(find . -iname \"*.sql\" -not -path \"*/node_modules/*\")",
+      "Bash(find . -type d -iname \"supabase\" -not -path \"*/node_modules/*\")",
+      "Bash(find . -type d -iname \"*supabase*\" -not -path \"*/node_modules/*\")",
+      "Bash(npx --yes tsc --noEmit -p web/tsconfig.json)",
+      "Bash(npm run *)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('next', p.dependencies.next\\); console.log\\('react', p.dependencies.react\\); console.log\\('react-dom', p.dependencies['react-dom']\\);\")",
+      "Bash(npm ls *)",
+      "Bash(node scripts/diag-students.cjs)"
     ]
   }
 }

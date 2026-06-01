@@ -110,10 +110,14 @@ export async function POST(req: Request) {
     const dd = String(base.getUTCDate()).padStart(2, '0');
     const expiryIso = `${yyyy}-${mm}-${dd}T23:59:59+05:30`;
 
-    // Webhook URL (where Cashfree will POST payment events)
+    // Webhook URL (where Cashfree will POST payment events). Prefer the
+    // configured public app URL — the request host is "localhost" in dev, which
+    // Cashfree (external) can't call back to, so the payment would never
+    // auto-mark as paid. Fall back to the request host when it isn't set.
     const proto = req.headers.get('x-forwarded-proto') ?? 'https';
     const host = req.headers.get('host') ?? '';
-    const notifyUrl = `${proto}://${host}/api/cashfree/webhook`;
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`).replace(/\/+$/, '');
+    const notifyUrl = `${baseUrl}/api/cashfree/webhook`;
 
     // If a previous link exists and is still ACTIVE, cancel it first so the customer
     // can't pay an orphaned link whose webhook wouldn't match this EMI any more.

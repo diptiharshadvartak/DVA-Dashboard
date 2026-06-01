@@ -33,14 +33,23 @@ export async function POST(req: Request) {
   switch (event.type) {
     case 'OutboundMessage':
     case 'WorkflowComplete': {
-      // best-effort: mark the most recent reminder for this contact as delivered/failed
+      // best-effort: mark the most recent reminder for this contact as delivered/failed.
+      // PostgREST ignores .order()/.limit() on UPDATE, so we must first resolve
+      // the single latest 'sent' reminder's id, then update by id — otherwise the
+      // update would overwrite EVERY 'sent' reminder for this contact.
       const status = event.messageStatus === 'delivered' || event.type === 'WorkflowComplete' ? 'delivered' : 'failed';
-      await sb.from('reminders')
-        .update({ status, fired_at: new Date().toISOString() })
+      const { data: latest } = await sb.from('reminders')
+        .select('id')
         .eq('ghl_contact_id', event.contactId ?? '')
         .eq('status', 'sent')
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(1)
+        .maybeSingle();
+      if (latest) {
+        await sb.from('reminders')
+          .update({ status, fired_at: new Date().toISOString() })
+          .eq('id', (latest as any).id);
+      }
       break;
     }
     case 'ContactUpdate': {

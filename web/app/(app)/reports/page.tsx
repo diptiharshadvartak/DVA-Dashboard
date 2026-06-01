@@ -1,4 +1,5 @@
 import { supabaseServer } from '@/lib/supabase/server';
+import { selectAllRows } from '@/lib/utils';
 import { KpiCard } from '@/components/ui/kpi-card';
 import {
   CallsPerWeekChart, CollectionRateChart, ReminderDeliveryChart, StudentFunnelChart,
@@ -28,18 +29,14 @@ export default async function ReportsPage() {
   const since6mIso  = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString();
   const since30dIso = new Date(now.getTime() - 30 * 86400000).toISOString();
 
-  const [
-    { data: students },
-    { data: calls   },
-    { data: emi     },
-    { data: reminders },
-    { data: achievementStudents },
-  ] = await Promise.all([
-    sb.from('students').select('id, end_date, deleted_at').is('deleted_at', null),
-    sb.from('call_logs').select('created_at, student_id').gte('created_at', since12wIso),
-    sb.from('emi_schedule').select('amount, due_date, status, paid_date').gte('due_date', since6mIso),
-    sb.from('reminders').select('event_id, status').gte('created_at', since30dIso),
-    sb.from('students').select('id, month_1, month_2, month_3, month_4, month_5, month_6, is_super_baker_finisher, is_super_baker_pending, is_hall_of_fame, is_hall_of_fame_pending, certificate_issued, certificate_pending_manual, bbr_attended, bbr_pending, deleted_at').is('deleted_at', null),
+  // All five reads are paginated (stable .order('id') + .range) so they don't
+  // hit the PostgREST 1000-row cap and silently undercount the KPIs/charts.
+  const [students, calls, emi, reminders, achievementStudents] = await Promise.all([
+    selectAllRows((f, t) => sb.from('students').select('id, end_date, course_end_date, deleted_at').is('deleted_at', null).order('id').range(f, t)),
+    selectAllRows((f, t) => sb.from('call_logs').select('created_at, student_id').gte('created_at', since12wIso).order('id').range(f, t)),
+    selectAllRows((f, t) => sb.from('emi_schedule').select('amount, due_date, status, paid_date').gte('due_date', since6mIso).order('id').range(f, t)),
+    selectAllRows((f, t) => sb.from('reminders').select('event_id, status').gte('created_at', since30dIso).order('id').range(f, t)),
+    selectAllRows((f, t) => sb.from('students').select('id, month_1, month_2, month_3, month_4, month_5, month_6, is_super_baker_finisher, is_super_baker_pending, is_hall_of_fame, is_hall_of_fame_pending, certificate_issued, certificate_pending_manual, bbr_attended, bbr_pending, deleted_at').is('deleted_at', null).order('id').range(f, t)),
   ]);
   
   // ---------- Achievement metrics ----------
@@ -382,8 +379,11 @@ function buildStudentFunnel(studentsRaw: any[], now: Date): FunnelStage[] {
   let active = 0, expiring = 0, expired = 0;
   const in30d = now.getTime() + 30 * 86400000;
   for (const s of studentsRaw) {
-    if (!s.end_date) { active++; continue; }
-    const end = new Date(s.end_date).getTime();
+    // Course end lives in course_end_date for imported/edited students; fall
+    // back to the legacy end_date so neither source is ignored.
+    const endVal = s.course_end_date ?? s.end_date;
+    if (!endVal) { active++; continue; }
+    const end = new Date(endVal).getTime();
     if (end < now.getTime()) expired++;
     else if (end <= in30d) expiring++;
     else active++;

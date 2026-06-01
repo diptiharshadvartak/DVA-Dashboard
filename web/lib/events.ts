@@ -1,8 +1,8 @@
 // Reminder dispatch + sweep helpers used by cron routes and manual trigger API.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ghlTriggerWorkflow, GhlError } from '@/lib/ghl/client';
-import { normalizePhone } from '@/lib/utils';
+import { ghlTriggerWorkflow, ghlUpsertContact, GhlError } from '@/lib/ghl/client';
+import { normalizePhone, istDateString, selectAllRows } from '@/lib/utils';
 
 type AnyClient = SupabaseClient<any, any, any>;
 
@@ -44,16 +44,42 @@ export async function dispatchReminder(sb: AnyClient, args: {
     return { ok: false, reminderId: row.id, error: 'workflow_id missing' };
   }
 
-  if (!isWebhookUrl(args.workflowId) && !args.ghlContactId) {
+  // Workflow-ID mode needs a GHL contact. Students imported/added here don't
+  // have one, so create it on the fly from the payload (email/phone/name) and
+  // remember it on the student — this lets us message them without a separate
+  // "Pull from GHL" step. Webhook-URL mode needs no contact, so skip this.
+  let contactId = args.ghlContactId;
+  if (!isWebhookUrl(args.workflowId) && !contactId) {
+    const p = args.payload as Record<string, any>;
+    if (p?.email) {
+      try {
+        const res = await ghlUpsertContact({
+          email: String(p.email),
+          firstName: p.first_name ?? null,
+          lastName: p.last_name ?? null,
+          phone: p.phone ?? null,
+        });
+        contactId = res?.contact?.id ?? null;
+        if (contactId) {
+          await sb.from('students').update({ ghl_contact_id: contactId }).eq('id', args.studentId);
+        }
+      } catch {
+        // Fall through to the missing-contact failure below (e.g. GHL token
+        // not configured) — the recorded error tells the user what to fix.
+      }
+    }
+  }
+
+  if (!isWebhookUrl(args.workflowId) && !contactId) {
     await sb.from('reminders').update({
       status: 'failed',
-      error: 'ghl_contact_id missing — run Pull from GHL, or switch this event to a webhook URL',
+      error: 'ghl_contact_id missing — set the GHL token in Settings, run Pull from GHL, or switch this event to a webhook URL',
     }).eq('id', row.id);
     return { ok: false, reminderId: row.id, error: 'ghl_contact_id missing' };
   }
 
   try {
-    await ghlTriggerWorkflow(args.ghlContactId, args.workflowId, args.payload);
+    await ghlTriggerWorkflow(contactId, args.workflowId, args.payload);
     await sb.from('reminders').update({
       status: 'sent', fired_at: new Date().toISOString(),
     }).eq('id', row.id);
@@ -71,14 +97,15 @@ export async function fireReminder(_event: string, _row: any) {
 
 export async function sweepEmiRemindersDue(sb: AnyClient, workflowId: string | null): Promise<number> {
   // Mark EMIs that are due today as 'due_soon' if still 'upcoming'
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istDateString();
   await sb
     .from('emi_schedule')
     .update({ status: 'due_soon', updated_at: new Date().toISOString() } as any)
     .eq('due_date', today)
     .eq('status', 'upcoming');
 
-  const { data: rows } = await sb.from('v_emi_due_today').select('*');
+  // Paginate so a backlog of >1000 due rows doesn't silently skip the tail.
+  const rows = await selectAllRows((f, t) => sb.from('v_emi_due_today').select('*').order('id').range(f, t));
   let fired = 0;
   for (const r of (rows ?? []) as any[]) {
     const dup = await sb.from('reminders').select('id')
@@ -119,7 +146,7 @@ export async function sweepEmiRemindersDue(sb: AnyClient, workflowId: string | n
 export async function sweepEmiOverdue(sb: AnyClient, workflowId: string | null): Promise<number> {
   // 1. Update status from 'upcoming' to 'overdue' for any EMIs past their due date.
   // This keeps emi_schedule.status in sync with reality (used by UI filters & badges).
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istDateString();
   await sb
     .from('emi_schedule')
     .update({ status: 'overdue', updated_at: new Date().toISOString() } as any)
@@ -127,7 +154,8 @@ export async function sweepEmiOverdue(sb: AnyClient, workflowId: string | null):
     .in('status', ['upcoming', 'due_soon']);
 
   // 2. Read the view (uses freshly-updated status) and send WhatsApp reminders.
-  const { data: rows } = await sb.from('v_emi_overdue').select('*');
+  //    Paginate so a backlog of >1000 overdue rows doesn't skip the tail.
+  const rows = await selectAllRows((f, t) => sb.from('v_emi_overdue').select('*').order('id').range(f, t));
   let fired = 0;
   for (const r of (rows ?? []) as any[]) {
     const { data: emiRow2 } = await sb.from('emi_schedule').select('cashfree_link_url, payment_link').eq('id', r.id).maybeSingle();
@@ -161,7 +189,7 @@ export async function sweepEmiOverdue(sb: AnyClient, workflowId: string | null):
 }
 
 export async function sweepSilentStudents(sb: AnyClient, workflowId: string | null): Promise<number> {
-  const { data: rows } = await sb.from('v_students_silent_30d').select('*');
+  const rows = await selectAllRows((f, t) => sb.from('v_students_silent_30d').select('*').order('id').range(f, t));
   let fired = 0;
   for (const r of (rows ?? []) as any[]) {
     const out = await dispatchReminder(sb, {
@@ -187,7 +215,7 @@ export async function sweepSilentStudents(sb: AnyClient, workflowId: string | nu
 // student via the configured GHL workflow. Deduped via the reminders table —
 // a follow-up that already has a "sent" reminder won't re-fire.
 export async function sweepFollowupsDue(sb: AnyClient, workflowId: string | null): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istDateString();
   const { data: rows } = await sb
     .from('call_logs')
     .select(`

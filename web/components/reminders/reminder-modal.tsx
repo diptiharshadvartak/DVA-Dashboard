@@ -77,7 +77,15 @@ export function ReminderModal({ open, onClose, studentId, emiId }: {
           },
         }),
       });
-      if (!r.ok) throw new Error(await r.text());
+      // Plain-text error responses (auth, missing fields) come back non-2xx.
+      if (!r.ok) throw new Error((await r.text()) || `Request failed (${r.status})`);
+      // The dispatch returns HTTP 200 even when GHL delivery fails, with
+      // { ok: false, error }. Check that so we don't claim success on a failed
+      // send (e.g. workflow_id missing, or the student has no GHL contact).
+      const result = await r.json().catch(() => null);
+      if (!result || result.ok === false) {
+        throw new Error(result?.error || 'Reminder could not be sent');
+      }
       toast('Reminder sent · WhatsApp + Email', 'success');
       onClose();
     } catch (e: any) {

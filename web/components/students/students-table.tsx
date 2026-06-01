@@ -17,8 +17,6 @@ type InitialFilter = 'all' | StatusKey;
 const PAGE_SIZE = 10;
 const TAG_DISPLAY_LIMIT = 3;
 
-// Grid template — give Last call and Payment more breathing room so they
-// don't overlap. Used in both header and body rows; must match.
 const GRID_COLS = 'grid-cols-[36px_1.4fr_0.9fr_1fr_0.7fr_0.7fr_0.9fr_0.55fr]';
 
 export function StudentsTable({
@@ -48,7 +46,6 @@ export function StudentsTable({
   const [tagSel, setTagSel] = useState<Set<string>>(new Set());
   const [emiFilter, setEmiFilter] = useState<Set<string>>(new Set());
   const [certFilter, setCertFilter] = useState<Set<string>>(new Set());
-  // Progress filter — numeric thresholds. "" = no filter, "3" = student must have ≥3 months done
   const [monthsDone, setMonthsDone] = useState<string>('');
   const [totalMonths, setTotalMonths] = useState<string>('6');
   const [weeksDone, setWeeksDone] = useState<string>('');

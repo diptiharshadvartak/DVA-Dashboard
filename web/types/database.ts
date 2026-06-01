@@ -28,6 +28,7 @@ export type Database = {
           mobile: string | null;
           membership: string | null;
           tags: string[];
+          student_group: string | null;
           start_date: string | null;
           end_date: string | null;
           course_start_date: string | null;

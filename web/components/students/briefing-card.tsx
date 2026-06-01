@@ -127,7 +127,7 @@ export function BriefingCard({ studentId, callsCount }: { studentId: string; cal
                 ? 'Regenerating…'
                 : (state?.source_calls_count
                     ? `Based on ${state.source_calls_count} call${state.source_calls_count > 1 ? 's' : ''}`
-                    : 'Generating…')} · regenerated just now
+                    : 'Generating…')}
             </div>
           </div>
         </div>

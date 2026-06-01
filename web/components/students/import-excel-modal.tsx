@@ -4,7 +4,6 @@ import { useRef, useState } from 'react';
 import { UploadCloud, FileSpreadsheet, CheckCircle2, X, AlertTriangle, Download } from 'lucide-react';
 import { useToast } from '@/components/shell/toast-region';
 
-// Types of rows we can parse
 type EmiRow = {
   type: 'emi';
   email: string;
@@ -18,7 +17,6 @@ type EmiRow = {
   payment_mode: string;
   total_fee: number;
   payment_link: string | null;
-  // Optional achievement + progress columns (if present in EMI sheet)
   month_1?: boolean; month_2?: boolean; month_3?: boolean;
   month_4?: boolean; month_5?: boolean; month_6?: boolean;
   is_super_baker_finisher?: boolean;
@@ -33,6 +31,15 @@ type EmiRow = {
   tags?: string[];
   course_end_date?: string | null;
   course_start_date?: string | null;
+  alternate_number?: string | null;
+  student_group?: string | null;
+  profile_link?: string | null;
+  total_fee_override?: number | null;
+  downpayment_amount?: number | null;
+  downpayment_date?: string | null;
+  full_payment_amount?: number | null;
+  full_payment_date?: string | null;
+  payment_history?: { amount: number; date: string | null }[];
 };
 
 type MasterRow = {
@@ -44,12 +51,8 @@ type MasterRow = {
   membership: string;
   tags: string[];
   background: string;
-  month_1: boolean;
-  month_2: boolean;
-  month_3: boolean;
-  month_4: boolean;
-  month_5: boolean;
-  month_6: boolean;
+  month_1: boolean; month_2: boolean; month_3: boolean;
+  month_4: boolean; month_5: boolean; month_6: boolean;
   is_super_baker_finisher: boolean;
   is_hall_of_fame: boolean;
   certificate_issued: boolean;
@@ -59,6 +62,15 @@ type MasterRow = {
   call_logs: { date: string | null; comment: string; coach_label: string }[];
   course_end_date?: string | null;
   course_start_date?: string | null;
+  alternate_number?: string | null;
+  student_group?: string | null;
+  profile_link?: string | null;
+  total_fee_override?: number | null;
+  downpayment_amount?: number | null;
+  downpayment_date?: string | null;
+  full_payment_amount?: number | null;
+  full_payment_date?: string | null;
+  payment_history?: { amount: number; date: string | null }[];
 };
 
 type DetectedType = 'emi' | 'master' | 'unknown';
@@ -90,6 +102,21 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
+      // Some files carry a stale/truncated range (!ref) that hides every row
+      // after the first. Rebuild it from the actual cells so all rows are read.
+      const cellAddrs = Object.keys(sheet).filter((k) => k[0] !== '!');
+      if (cellAddrs.length > 0) {
+        const r = cellAddrs.reduce(
+          (acc, addr) => {
+            const c = XLSX.utils.decode_cell(addr);
+            acc.s.r = Math.min(acc.s.r, c.r); acc.s.c = Math.min(acc.s.c, c.c);
+            acc.e.r = Math.max(acc.e.r, c.r); acc.e.c = Math.max(acc.e.c, c.c);
+            return acc;
+          },
+          { s: { r: Infinity, c: Infinity }, e: { r: -1, c: -1 } }
+        );
+        sheet['!ref'] = XLSX.utils.encode_range(r);
+      }
       const json: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
 
       if (json.length === 0) {
@@ -97,12 +124,10 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
         return;
       }
 
-      // Auto-detect file type by columns
       const columns = Object.keys(json[0]);
       const type = detectFileType(columns);
       setDetected(type);
 
-      // Detect what EXTRA data is present (beyond core payment/profile)
       const cols = columns.map(x => x.toLowerCase());
       const found: string[] = [];
       if (['month 1','month 2','month 3'].some(m => cols.includes(m))) found.push('Course progress (Month 1-6)');
@@ -118,24 +143,25 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
         setErrors([
           `Couldn't detect file type.`,
           `Columns found in your file: ${columns.join(', ')}`,
-          `Need either: "EMI amount" + "EMI"  (for payments)`,
+          `Need either: "Total Fee" / "Down Payment" / "Payment 1"  (for payments)`,
           `Or: "Month 1", "Month 2", "Month 3"  (for progress)`,
         ]);
         return;
       }
 
-      // Parse based on detected type
       const parsedEmi: EmiRow[] = [];
       const parsedMaster: MasterRow[] = [];
       const errs: string[] = [];
 
       json.forEach((row, idx) => {
         const rowNum = idx + 2;
-        // Skip non-data rows: notes, legends, empty rows.
-        // A real data row MUST have a valid email (contains "@") in the email column.
         const emailVal = (row['Email Id'] || row['Email'] || row['email'] || '').toString().trim();
         if (!emailVal.includes('@')) {
-          return;  // silently skip — this is a note/legend/empty row, not data
+          // Ignore fully-blank rows silently; flag rows that have data but no
+          // valid email so they aren't dropped without the user noticing.
+          const hasAnyData = Object.values(row).some((v) => v != null && v.toString().trim() !== '');
+          if (hasAnyData) errs.push(`Row ${rowNum}: skipped — no valid email (found "${emailVal}")`);
+          return;
         }
         try {
           if (type === 'emi') {
@@ -170,7 +196,7 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
         : '/api/students/import-master-sheet';
       
       let inserted = 0, updated = 0, emis = 0;
-      // Process in chunks
+      const serverErrors: string[] = [];
       for (let i = 0; i < rows.length; i += 50) {
         const chunk = rows.slice(i, i + 50);
         const res = await fetch(endpoint, {
@@ -180,16 +206,22 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error ?? 'Import failed');
+        // Surface per-row failures the server reports instead of silently
+        // dropping them (otherwise a "1 imported" success hides skipped rows).
+        if (Array.isArray(data.errors)) serverErrors.push(...data.errors);
         inserted += data.inserted ?? data.imported ?? 0;
         updated += data.updated ?? 0;
         emis += data.emis ?? 0;
       }
+      if (serverErrors.length > 0) setErrors((prev) => [...prev, ...serverErrors]);
       setDone({ inserted, updated, emis });
       toast(
-        detected === 'emi'
-          ? `Imported ${inserted} students with ${emis} EMI rows`
-          : `Imported: ${inserted} new + ${updated} updated`,
-        'success'
+        serverErrors.length > 0
+          ? `Imported ${inserted}, but ${serverErrors.length} row(s) failed — see details below`
+          : detected === 'emi'
+            ? `Imported ${inserted} students with ${emis} EMI rows`
+            : `Imported: ${inserted} new + ${updated} updated`,
+        serverErrors.length > 0 ? 'error' : 'success'
       );
       onDone();
     } catch (e: any) {
@@ -202,19 +234,28 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
   const rows = detected === 'emi' ? emiRows : masterRows;
   const totalRows = rows.length;
 
-  // Generate + download a sample CSV template with the exact columns the importer expects
   function downloadSample() {
     const headers = [
-      'Email Id','Name','Surname','Mobile Number','Membership','Tags','Course Start Date','Course End Date',
-      'Due Date','EMI amount','EMI','Payment Mode',
+      'Email Id','Name','Surname','Mobile Number','Alternate Number','Membership','Tags','Group',
+      'Course Start Date','Course End Date',
+      'Total Fee','Payment Mode',
+      'Down Payment','Down Payment Date',
+      'Payment 1','Payment 1 Date','Payment 2','Payment 2 Date','Payment 3','Payment 3 Date',
       'Month 1','Month 2','Month 3','Month 4','Month 5','Month 6',
       'SBF','Hall of Fame','Certificate','Certificate Date','BBR2','BBR Date',
       'Remarks','Call Date','Call Remarks',
     ];
+    // The schedule is derived from these payment columns — there is no EMI
+    // amount / EMI (X/Y) column. Down Payment + Payment 1..12 = paid so far;
+    // Total Fee − paid = outstanding. If they sum to the Total Fee the student
+    // shows as Fully Paid.
     const rows = [
-      ['anjali@gmail.com','Anjali','Sharma','9876543210','Diamond','S','01 Jan 2025','30 Jun 2025','15 Feb 2027','12222','15/15','Card','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','20 May 2026','BBR2','18 May 2026','Graduated. Excellent baker.','15 May 2026','Final review - completed everything'],
-      ['rohan@gmail.com','Rohan','Verma','9123456789','Diamond','SDC','15 Feb 2025','15 Aug 2025','20 Mar 2026','10000','3/6','NEFT','TRUE','TRUE','TRUE','TRUE','TRUE','FALSE','FALSE','FALSE','FALSE','','BBR-ABSENT','','On track, missed BBR.','10 May 2026','Discussed month 6 plan'],
-      ['meera@gmail.com','Meera','Iyer','9988776655','Diamond','J','10 Apr 2025','10 Oct 2025','15 Apr 2026','5000','1/9','UPI','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','','','Just started.','01 Apr 2026','Onboarding call, enthusiastic'],
+      // Fully paid: 30000 + 60000 + 60000 = 150000 = Total Fee
+      ['anjali@gmail.com','Anjali','Sharma','9876543210','9876500000','Diamond','S','Batch A','01 Jan 2025','30 Jun 2025','150000','Card','30000','05 Jan 2025','60000','05 Feb 2025','60000','05 Mar 2025','','','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','20 May 2026','BBR2','18 May 2026','Graduated. Fully paid.','15 May 2026','Final review - completed everything'],
+      // Partly paid: 30000 + 50000 = 80000 of 180000 → 100000 outstanding
+      ['rohan@gmail.com','Rohan','Verma','9123456789','','Diamond','SDC','Batch B','15 Feb 2025','15 Aug 2025','180000','NEFT','30000','20 Feb 2025','50000','20 Mar 2025','','','','','TRUE','TRUE','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','BBR-ABSENT','','On track, balance pending.','10 May 2026','Discussed month 6 plan'],
+      // Down payment only: 20000 of 120000 → 100000 outstanding
+      ['meera@gmail.com','Meera','Iyer','9988776655','','Diamond','J','Batch C','10 Apr 2025','10 Oct 2025','120000','UPI','20000','12 Apr 2025','','','','','','','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','','','Just started.','01 Apr 2026','Onboarding call, enthusiastic'],
     ];
     const escape = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     const csv = [headers, ...rows].map((r) => r.map((c) => escape(String(c))).join(',')).join('\n');
@@ -269,7 +310,6 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
               <span>to see the format.</span>
             </div>
 
-            {/* Detection result */}
             {fileName && detected !== 'unknown' && (
               <div className={`rounded-lg border p-3 text-[12px] ${
                 detected === 'emi' 
@@ -318,36 +358,24 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
               </div>
             )}
 
-            {/* EMI preview */}
             {detected === 'emi' && emiRows.length > 0 && !done && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
                 <div className="grid grid-cols-2 gap-3 text-[12px] text-ink-700">
                   <Stat label="Students" value={emiRows.length} />
-                  <Stat label="Total EMIs" value={emiRows.reduce((s,r) => s + r.emi_total, 0)} />
-                  <Stat label="Already Paid" value={emiRows.reduce((s,r) => s + r.emi_current, 0)} tone="emerald" />
+                  <Stat label="Payments recorded" value={emiRows.reduce((s,r) => s + (r.downpayment_amount ? 1 : 0) + (r.payment_history?.length ?? 0) + (r.full_payment_amount ? 1 : 0), 0)} />
+                  <Stat label="Paid so far" tone="emerald" value={`₹${emiRows.reduce((s,r) => s + (Number(r.downpayment_amount) || 0) + (r.payment_history?.reduce((a,p) => a + (Number(p.amount) || 0), 0) ?? 0) + (Number(r.full_payment_amount) || 0), 0).toLocaleString('en-IN')}`} />
                   <Stat label="Total Fees" value={`₹${emiRows.reduce((s,r) => s + r.total_fee, 0).toLocaleString('en-IN')}`} />
                 </div>
               </div>
             )}
 
-            {/* Master preview */}
             {detected === 'master' && masterRows.length > 0 && !done && (
               <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4">
                 <div className="grid grid-cols-2 gap-3 text-[12px] text-ink-700">
                   <Stat label="Students" value={masterRows.length} />
-                  <Stat 
-                    label="With progress" 
-                    value={masterRows.filter(r => r.month_1||r.month_2||r.month_3||r.month_4||r.month_5||r.month_6).length} 
-                  />
-                  <Stat 
-                    label="Months marked" 
-                    value={masterRows.reduce((s,r) => s + (r.month_1?1:0)+(r.month_2?1:0)+(r.month_3?1:0)+(r.month_4?1:0)+(r.month_5?1:0)+(r.month_6?1:0), 0)} 
-                  />
-                  <Stat 
-                    label="Weeks (auto-marked)" 
-                    value={masterRows.reduce((s,r) => s + (r.month_1?1:0)+(r.month_2?1:0)+(r.month_3?1:0)+(r.month_4?1:0)+(r.month_5?1:0)+(r.month_6?1:0), 0) * 4} 
-                    tone="emerald" 
-                  />
+                  <Stat label="With progress" value={masterRows.filter(r => r.month_1||r.month_2||r.month_3||r.month_4||r.month_5||r.month_6).length} />
+                  <Stat label="Months marked" value={masterRows.reduce((s,r) => s + (r.month_1?1:0)+(r.month_2?1:0)+(r.month_3?1:0)+(r.month_4?1:0)+(r.month_5?1:0)+(r.month_6?1:0), 0)} />
+                  <Stat label="Weeks (auto-marked)" value={masterRows.reduce((s,r) => s + (r.month_1?1:0)+(r.month_2?1:0)+(r.month_3?1:0)+(r.month_4?1:0)+(r.month_5?1:0)+(r.month_6?1:0), 0) * 4} tone="emerald" />
                 </div>
               </div>
             )}
@@ -402,14 +430,23 @@ function Stat({ label, value, tone }: { label: string; value: any; tone?: 'emera
 }
 
 function detectFileType(columns: string[]): DetectedType {
-  const normalized = columns.map(c => c.toLowerCase());
-  const hasEmiCols = normalized.some(c => c.includes('emi amount')) && 
-                     normalized.some(c => c === 'emi' || c.includes('emi '));
-  const hasMonthCols = ['month 1', 'month 2', 'month 3'].every(m => 
+  const normalized = columns.map(c => c.toLowerCase().trim());
+  // A payments/EMI sheet is identified by ANY payment-tracking column. The old
+  // "EMI amount" + "EMI" columns are no longer required — the schedule is now
+  // derived from the Payment 1..12 columns, Down Payment and Total Fee. We
+  // still accept the legacy EMI columns for backward compatibility.
+  const hasPaymentCols = normalized.some(c =>
+    c === 'emi' ||
+    c.includes('emi amount') ||
+    c === 'total fee' ||
+    c === 'down payment' ||
+    c === 'full payment' ||
+    /^payment \d+$/.test(c)
+  );
+  const hasMonthCols = ['month 1', 'month 2', 'month 3'].every(m =>
     normalized.some(c => c === m)
   );
-  
-  if (hasEmiCols) return 'emi';
+  if (hasPaymentCols) return 'emi';
   if (hasMonthCols) return 'master';
   return 'unknown';
 }
@@ -420,21 +457,39 @@ function parseEmiRow(row: any, rowNum: number): EmiRow | { error: string } {
   const mobile = (row['Mobile Number'] || row['mobile'] || '').toString().trim();
   const emiStr = (row['EMI'] || '').toString().trim();
   const amount = parseAmount(row['EMI amount'] || row['amount']);
-  const dueRaw = row['Due Date'] || row['due_date'];
+  // This template has no "Due Date" column — anchor the EMI schedule on the
+  // course start (then course end) so plain EMI=X/Y rows aren't skipped.
+  const dueRaw = row['Due Date'] || row['due_date']
+    || row['Course Start Date'] || row['course_start_date']
+    || row['Course End Date'] || row['course_end_date'];
   
   if (!email) return { error: `Row ${rowNum}: missing email` };
   if (!name) return { error: `Row ${rowNum}: missing name` };
-  if (!amount) return { error: `Row ${rowNum}: invalid amount` };
-  if (!dueRaw) return { error: `Row ${rowNum}: missing due date` };
   
-  const emiMatch = emiStr.match(/(\d+)\s*\/\s*(\d+)/);
-  if (!emiMatch) return { error: `Row ${rowNum}: invalid EMI format "${emiStr}"` };
-  
-  const dueDate = parseDate(dueRaw);
-  if (!dueDate) return { error: `Row ${rowNum}: invalid due date "${dueRaw}"` };
+  // Payment data. The schedule is derived from these — Total Fee for the
+  // balance, Down Payment + Payment 1..12 for what's been paid. "EMI amount"
+  // and "EMI" (X/Y) are legacy/optional: if present we still read them, but a
+  // sheet without those columns imports fine.
+  const fullPay = parseAmount(row['Full Payment'] || row['full_payment_amount']);
+  const downPay = parseAmount(row['Down Payment'] || row['downpayment_amount']);
+  const explicitHistory = parsePaymentHistory(row);
+  const hasExplicitPayments = fullPay > 0 || downPay > 0 || explicitHistory.length > 0;
+  const totalFeeOverride = parseAmount(row['Total Fee'] || row['total_fee']);
 
-  const current = parseInt(emiMatch[1]);
-  const total = parseInt(emiMatch[2]);
+  // A row needs SOME payment/fee signal to be a meaningful EMI row. Without
+  // any of these there's nothing to track, so flag it instead of importing a
+  // blank payment record.
+  if (!hasExplicitPayments && totalFeeOverride <= 0 && amount <= 0) {
+    return { error: `Row ${rowNum}: no payment data (Total Fee, Down Payment and Payment columns are all empty)` };
+  }
+
+  // Legacy EMI ratio (X/Y) — only present on old sheets; optional now.
+  const emiMatch = emiStr.match(/(\d+)\s*\/\s*(\d+)/);
+  const current = emiMatch ? parseInt(emiMatch[1]) : 0;
+  const total = emiMatch ? parseInt(emiMatch[2]) : 0;
+  const finalAmount = amount > 0 ? amount : 0;
+  const dueDate = parseDate(dueRaw) || new Date().toISOString().substring(0, 10);
+
   return {
     type: 'emi',
     email: email.toLowerCase(),
@@ -443,12 +498,11 @@ function parseEmiRow(row: any, rowNum: number): EmiRow | { error: string } {
     mobile: cleanPhone(mobile),
     emi_current: current,
     emi_total: total,
-    emi_amount: amount,
+    emi_amount: finalAmount,
     due_date: dueDate,
-    payment_mode: normalizeMode(row['Payment Mode'] || row['Mode'] || row['payment_mode'] || row['mode'] || row['Unnamed: 8']),
-    total_fee: amount * total,
-    payment_link: (row['Payment Link'] || row['payment_link'] || row['Unnamed: 9'] || '').toString().trim() || null,
-    // Achievement + progress columns (optional — only used if present in sheet)
+    payment_mode: normalizeMode(row['Payment Mode'] || row['Mode'] || row['payment_mode'] || row['mode']),
+    total_fee: totalFeeOverride > 0 ? totalFeeOverride : (fullPay > 0 ? fullPay : finalAmount * total),
+    payment_link: (row['Payment Link'] || row['payment_link'] || '').toString().trim() || null,
     month_1: hasMonthCol(row, 1) ? parseBool(row['Month 1'] || row['month_1']) : undefined,
     month_2: hasMonthCol(row, 2) ? parseBool(row['Month 2'] || row['month_2']) : undefined,
     month_3: hasMonthCol(row, 3) ? parseBool(row['Month 3'] || row['month_3']) : undefined,
@@ -467,6 +521,15 @@ function parseEmiRow(row: any, rowNum: number): EmiRow | { error: string } {
     tags: ('Tags' in row || 'tags' in row) ? parseTags(row['Tags'] || row['tags']) : undefined,
     course_end_date: parseDate(row['Course End Date'] || row['course_end_date']),
     course_start_date: parseDate(row['Course Start Date'] || row['course_start_date']),
+    alternate_number: (row['Alternate Number'] || row['alternate_number'] || '').toString().trim() || null,
+    student_group: (row['Group'] || row['group'] || row['student_group'] || '').toString().trim() || null,
+    profile_link: (row['Profile Link'] || row['profile_link'] || '').toString().trim() || null,
+    total_fee_override: parseAmount(row['Total Fee'] || row['total_fee']) || null,
+    downpayment_amount: parseAmount(row['Down Payment'] || row['downpayment_amount']) || null,
+    downpayment_date: parseDate(row['Down Payment Date'] || row['downpayment_date']),
+    full_payment_amount: parseAmount(row['Full Payment'] || row['full_payment_amount']) || null,
+    full_payment_date: parseDate(row['Full Payment Date'] || row['full_payment_date']),
+    payment_history: parsePaymentHistory(row),
   };
 }
 
@@ -485,7 +548,6 @@ function parseMasterRow(row: any, rowNum: number): MasterRow | { error: string }
     }
   });
 
-  // Parse call log entries: pair each Call Date column with its comment column
   const callLogs: { date: string | null; comment: string; coach_label: string }[] = [];
   const callPairs = [
     { dateCol: 'Call Date',   commentCol: 'DV Comments',   coach: 'DV' },
@@ -529,7 +591,35 @@ function parseMasterRow(row: any, rowNum: number): MasterRow | { error: string }
     call_logs: callLogs,
     course_end_date: parseDate(row['Course End Date'] || row['course_end_date']),
     course_start_date: parseDate(row['Course Start Date'] || row['course_start_date']),
+    alternate_number: (row['Alternate Number'] || row['alternate_number'] || '').toString().trim() || null,
+    student_group: (row['Group'] || row['group'] || row['student_group'] || '').toString().trim() || null,
+    profile_link: (row['Profile Link'] || row['profile_link'] || '').toString().trim() || null,
+    total_fee_override: parseAmount(row['Total Fee'] || row['total_fee']) || null,
+    downpayment_amount: parseAmount(row['Down Payment'] || row['downpayment_amount']) || null,
+    downpayment_date: parseDate(row['Down Payment Date'] || row['downpayment_date']),
+    full_payment_amount: parseAmount(row['Full Payment'] || row['full_payment_amount']) || null,
+    full_payment_date: parseDate(row['Full Payment Date'] || row['full_payment_date']),
+    payment_history: parsePaymentHistory(row),
   };
+}
+
+function parsePaymentHistory(row: any): { amount: number; date: string | null }[] {
+  // Scan for every "Payment N" column present in the sheet — no fixed cap — so
+  // Payment 1..12, 13, 20, 50… all import. Numbers are read in ascending order,
+  // and the matching "Payment N Date" column supplies the date.
+  const nums = Object.keys(row)
+    .map((k) => /^Payment (\d+)$/.exec(k)?.[1])
+    .filter((v): v is string => v != null)
+    .map((v) => parseInt(v, 10))
+    .sort((a, b) => a - b);
+
+  const out: { amount: number; date: string | null }[] = [];
+  for (const n of nums) {
+    const amt = parseAmount(row[`Payment ${n}`]);
+    const dt = parseDate(row[`Payment ${n} Date`]);
+    if (amt > 0) out.push({ amount: amt, date: dt });
+  }
+  return out;
 }
 
 function parseAmount(v: any): number {
@@ -538,13 +628,7 @@ function parseAmount(v: any): number {
   const n = parseFloat(s);
   return isNaN(n) ? 0 : Math.round(n);
 }
-function hasValue(v: any): boolean {
-  if (v == null) return false;
-  const s = v.toString().trim();
-  return s.length > 0 && s.toLowerCase() !== 'false' && s !== '0';
-}
 
-// BBR2 column: "BBR2" = attended, "BBR-ABSENT" = absent (NOT attended), "" = no data
 function emiCallLogs(row: any): { date: string | null; comment: string; coach_label: string }[] {
   const logs: { date: string | null; comment: string; coach_label: string }[] = [];
   const pairs = [
@@ -578,8 +662,8 @@ function parseBBR(v: any): boolean {
   if (v == null) return false;
   const s = v.toString().trim().toLowerCase();
   if (s.length === 0) return false;
-  if (s.includes('absent')) return false;   // BBR-ABSENT = did not attend
-  if (s.includes('bbr')) return true;        // BBR2 = attended
+  if (s.includes('absent')) return false;
+  if (s.includes('bbr')) return true;
   return false;
 }
 
@@ -588,10 +672,12 @@ function parseBool(v: any): boolean {
   const s = v.toString().trim().toLowerCase();
   return s === 'true' || s === '1' || s === 'yes' || s === 'y';
 }
+
 function parseTags(v: any): string[] {
   if (!v) return [];
   return v.toString().split(/[,;|\s]+/).map((t: string) => t.trim()).filter(Boolean);
 }
+
 function cleanPhone(p: any): string {
   if (!p) return '';
   const digits = p.toString().replace(/\D/g, '');
@@ -600,6 +686,7 @@ function cleanPhone(p: any): string {
   if (digits.length === 11 && digits.startsWith('0')) return '+91' + digits.slice(1);
   return digits ? '+' + digits : '';
 }
+
 function normalizeMode(m: any): string {
   if (!m) return 'Card';
   const s = m.toString().trim().toLowerCase();
@@ -610,6 +697,7 @@ function normalizeMode(m: any): string {
   if (s.includes('cash')) return 'Cash';
   return m.toString().trim();
 }
+
 function parseDate(v: any): string | null {
   if (!v) return null;
   if (v instanceof Date) {
@@ -621,43 +709,35 @@ function parseDate(v: any): string | null {
   const s = v.toString().trim();
   if (!s) return null;
 
-  // ISO: 2026-04-15
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
 
-  // Text month: "15 Feb 2027" or "Feb 15 2027"
   const months: Record<string, string> = {
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
   };
-  const m1 = s.match(/^(\d{1,2})\s+(\w+)\s+(\d{4})$/);  // 15 Feb 2027
+  const m1 = s.match(/^(\d{1,2})\s+(\w+)\s+(\d{4})$/);
   if (m1) {
     const day = m1[1].padStart(2, '0');
     const mon = months[m1[2].substring(0, 3).toLowerCase()];
     if (mon) return `${m1[3]}-${mon}-${day}`;
   }
-  const m1b = s.match(/^(\w+)\s+(\d{1,2}),?\s+(\d{4})$/);  // Feb 15, 2027
+  const m1b = s.match(/^(\w+)\s+(\d{1,2}),?\s+(\d{4})$/);
   if (m1b) {
     const mon = months[m1b[1].substring(0, 3).toLowerCase()];
     const day = m1b[2].padStart(2, '0');
     if (mon) return `${m1b[3]}-${mon}-${day}`;
   }
 
-  // Slash/dash: handles 1/2/3 with 2- or 4-digit year, smart D/M vs M/D
   const m2 = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
   if (m2) {
-    let a = parseInt(m2[1], 10);   // first number
-    let b = parseInt(m2[2], 10);   // second number
+    let a = parseInt(m2[1], 10);
+    let b = parseInt(m2[2], 10);
     let year = parseInt(m2[3], 10);
-    if (year < 100) year += 2000;  // 27 -> 2027
-
+    if (year < 100) year += 2000;
     let day: number, mon: number;
-    if (a > 12) {            // a must be the day (D/M/Y)
-      day = a; mon = b;
-    } else if (b > 12) {     // b must be the day (M/D/Y) — e.g. 2/15/27
-      mon = a; day = b;
-    } else {                 // ambiguous (both <=12) -> assume D/M/Y (Indian)
-      day = a; mon = b;
-    }
+    if (a > 12) { day = a; mon = b; }
+    else if (b > 12) { mon = a; day = b; }
+    else { day = a; mon = b; }
     if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) {
       return `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }

@@ -45,13 +45,18 @@ export async function POST(req: Request) {
   // Normalize phone before forwarding to GHL.
   const normalizedPhone = normalizePhone(student.mobile);
 
+  // Authoritative student fields from the DB go LAST so they override anything
+  // the client sent. Previously body.payload was spread last, so the modal's
+  // raw, un-normalized phone clobbered normalizedPhone — and a badly formatted
+  // phone makes GHL/WhatsApp silently not deliver. The client's message fields
+  // (emi_amount, payment_link, due_date, installment) are still preserved.
   const enrichedPayload = {
+    ...(body.payload ?? {}),
     student_id: student.id,
     email: student.email,
     first_name: student.first_name,
     last_name: student.last_name,
     phone: normalizedPhone,
-    ...(body.payload ?? {}),
   };
 
   const result = await dispatchReminder(sb, {

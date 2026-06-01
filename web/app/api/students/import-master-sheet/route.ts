@@ -85,8 +85,9 @@ export async function POST(req: Request) {
 
       let studentId: string;
       if (existing) {
-        // UPDATE — preserves emi_schedule, payment data, payment_link
-        // Trigger will auto-sync months → weeks
+        // UPDATE — preserves emi_schedule, payment data, payment_link.
+        // (Weekly checkpoints are materialized from the month flags below —
+        // there is no DB trigger doing it.)
         const { error } = await admin
           .from('students')
           .update(data)
@@ -109,23 +110,41 @@ export async function POST(req: Request) {
       // Import call logs (if present in the sheet)
       if (row.call_logs && row.call_logs.length > 0) {
         for (const call of row.call_logs) {
-          // Avoid duplicates: skip if a call with same comment already exists for this student
+          // Dedup against the SAME stored form ("[label] comment") that we
+          // insert below — matching the raw comment never hit, so re-imports
+          // created duplicate call logs.
+          const storedComment = `[${call.coach_label}] ${call.comment}`;
           const { data: dupe } = await admin
             .from('call_logs')
             .select('id')
             .eq('student_id', studentId)
-            .eq('comment', call.comment)
+            .eq('comment', storedComment)
             .maybeSingle();
           if (dupe) continue;
 
-          await admin.from('call_logs').insert({
+          const { error: clErr } = await admin.from('call_logs').insert({
             student_id: studentId,
             coach_id: user.id,  // importing admin as the logger
-            comment: `[${call.coach_label}] ${call.comment}`,
+            comment: storedComment,
             outcome: 'connected',
             created_at: call.date ? new Date(call.date).toISOString() : new Date().toISOString(),
           } as any);
+          if (clErr) errors.push(`${row.email}: a call log was not saved — ${clErr.message}`);
         }
+      }
+
+      // Materialize weekly checkpoints from the month flags. The Progress tab is
+      // week-driven (4 weeks/month) and derives month completion from
+      // weekly_checkpoints — there is no DB trigger syncing months → weeks, so
+      // without this the imported months wouldn't show in the UI.
+      const monthFlags = [row.month_1, row.month_2, row.month_3, row.month_4, row.month_5, row.month_6];
+      const weekRows: any[] = [];
+      monthFlags.forEach((done, idx) => {
+        if (done) for (let w = 1; w <= 4; w++) weekRows.push({ student_id: studentId, week_no: idx * 4 + w, completed: true });
+      });
+      if (weekRows.length > 0) {
+        const { error: wkErr } = await admin.from('weekly_checkpoints').upsert(weekRows as any, { onConflict: 'student_id,week_no' });
+        if (wkErr) errors.push(`${row.email}: progress weeks not saved — ${wkErr.message}`);
       }
     } catch (e: any) {
       errors.push(`${row.email}: ${e.message ?? 'unknown error'}`);
