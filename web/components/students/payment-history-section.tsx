@@ -18,7 +18,7 @@ type CashfreeEvent = {
   created_at: string;
 };
 
-export function PaymentHistorySection({ studentId }: { studentId: string }) {
+export function PaymentHistorySection({ studentId, refreshKey = 0 }: { studentId: string; refreshKey?: number }) {
   const sb = useMemo(() => supabaseBrowser(), []);
   const [events, setEvents] = useState<CashfreeEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,7 +35,9 @@ export function PaymentHistorySection({ studentId }: { studentId: string }) {
       setEvents((data ?? []) as CashfreeEvent[]);
       setLoading(false);
     })().catch(() => setLoading(false));
-  }, [studentId, sb]);
+    // refreshKey bumps when the parent reloads (e.g. after a Cashfree sync marks
+    // an EMI paid), so the counts and event list stay in step with the schedule.
+  }, [studentId, sb, refreshKey]);
 
   if (loading) return null;
   if (events.length === 0) return null;

@@ -39,6 +39,9 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const [busySync, setBusySync] = useState<string | null>(null);
   const [paymentIdsByEmi, setPaymentIdsByEmi] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
+  // Bumped after every load() so child sections (e.g. Payment History) re-fetch
+  // once a sync/mark-paid has changed the underlying data.
+  const [refreshKey, setRefreshKey] = useState(0);
   // Auto status-reconcile runs once per student load so it can't loop with load().
   const autoSyncDone = useRef(false);
 
@@ -90,6 +93,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
     }
     setPaymentIdsByEmi(idMap);
     setLoaded(true);
+    setRefreshKey((k) => k + 1);
     return emiRows;
   }
 
@@ -165,29 +169,30 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const scheduledUnpaid = rows.filter(r => r.status !== 'paid').reduce((s, r) => s + Number(r.amount), 0);
   const collectable = Math.max(0, outstanding - scheduledUnpaid);
 
-  // Per-row display: walk the schedule in order accumulating planned money on top
-  // of the down payment. A row whose money begins at/after the total fee is an
-  // EXTRA top-up (collected once the plan was already fully covered) — label it
-  // "Extra" instead of folding it into the n/N plan numbering. The rest are
-  // numbered against the count of real plan installments so denominators stay
-  // consistent (no "4/4" sitting next to "x/3").
-  const planCount = (() => {
-    let cum = downPayment;
-    let n = 0;
-    for (const r of rows) {
-      const isExtra = totalFee > 0 && cum >= totalFee - 1;
-      if (!isExtra) n += 1;
-      cum += Number(r.amount);
-    }
-    return n;
-  })();
-  const labeledRows = (() => {
-    let cum = downPayment;
-    let planIdx = 0;
+  // Per-row display + "Extra" flagging.
+  //
+  // A payment is "Extra" ONLY once the full fee has actually been CLEARED by
+  // real money received — i.e. a *paid* installment whose money starts at/after
+  // the total fee (down payment + earlier paid installments already cover it).
+  // An unpaid installment is never "extra"; it's a pending obligation toward the
+  // balance. So while EMIs are still owed, a collected payment shows as a normal
+  // numbered installment; it only flips to "Extra" once the fee is paid off.
+  // Non-extra rows are numbered against the count of real plan installments so
+  // denominators stay consistent (no "4/4" sitting next to "x/3").
+  const extraFlags = (() => {
+    let cumPaid = downPayment; // down payment counts as money received
     return rows.map((r) => {
-      const isExtra = totalFee > 0 && cum >= totalFee - 1;
-      cum += Number(r.amount);
-      if (isExtra) return { row: r, isExtra: true, label: 'Extra' };
+      if (r.status !== 'paid') return false;
+      const isExtra = totalFee > 0 && cumPaid >= totalFee - 1;
+      cumPaid += Number(r.amount);
+      return isExtra;
+    });
+  })();
+  const planCount = extraFlags.filter((f) => !f).length;
+  const labeledRows = (() => {
+    let planIdx = 0;
+    return rows.map((r, i) => {
+      if (extraFlags[i]) return { row: r, isExtra: true, label: 'Extra' };
       planIdx += 1;
       return { row: r, isExtra: false, label: `${planIdx}/${planCount}` };
     });
@@ -540,7 +545,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
         />
       )}
 
-      <PaymentHistorySection studentId={studentId} />
+      <PaymentHistorySection studentId={studentId} refreshKey={refreshKey} />
     </div>
   );
 }
