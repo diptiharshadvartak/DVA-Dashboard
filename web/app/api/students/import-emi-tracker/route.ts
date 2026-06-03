@@ -41,7 +41,7 @@ type ParsedRow = {
   downpayment_date?: string | null;
   full_payment_amount?: number | null;
   full_payment_date?: string | null;
-  payment_history?: { amount: number; date: string | null }[];
+  payment_history?: { amount: number; date: string | null; mode?: string }[];
 };
 
 // Build optional achievement/progress fields (only include keys that are defined)
@@ -382,11 +382,14 @@ export async function POST(req: Request) {
   });
 }
 
-// Mode for the Nth payment (0-based). When the sheet lists a mode per payment
-// ("UPI, Credit Card, NEFT") use the matching one; if there are fewer modes
-// than payments the last one carries forward; with no list, fall back to the
-// single payment_mode.
+// Mode for the Nth payment (0-based). Precedence:
+//   1. a per-payment "Payment N Mode" column (carried on payment_history)
+//   2. a comma-separated Payment Mode list ("UPI, Credit Card, NEFT") — the
+//      Nth entry, with the last carrying forward if fewer modes than payments
+//   3. the single Payment Mode for the whole row
 function modeAt(row: ParsedRow, idx: number): string {
+  const perPayment = row.payment_history?.[idx]?.mode;
+  if (perPayment) return perPayment;
   const list = row.payment_modes;
   if (list && list.length > 0) return list[Math.min(idx, list.length - 1)];
   return row.payment_mode || 'Payment';

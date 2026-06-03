@@ -40,7 +40,7 @@ type EmiRow = {
   downpayment_date?: string | null;
   full_payment_amount?: number | null;
   full_payment_date?: string | null;
-  payment_history?: { amount: number; date: string | null }[];
+  payment_history?: { amount: number; date: string | null; mode?: string }[];
 };
 
 type MasterRow = {
@@ -71,7 +71,7 @@ type MasterRow = {
   downpayment_date?: string | null;
   full_payment_amount?: number | null;
   full_payment_date?: string | null;
-  payment_history?: { amount: number; date: string | null }[];
+  payment_history?: { amount: number; date: string | null; mode?: string }[];
 };
 
 type DetectedType = 'emi' | 'master' | 'unknown';
@@ -615,21 +615,24 @@ function parseMasterRow(row: any, rowNum: number): MasterRow | { error: string }
   };
 }
 
-function parsePaymentHistory(row: any): { amount: number; date: string | null }[] {
+function parsePaymentHistory(row: any): { amount: number; date: string | null; mode?: string }[] {
   // Scan for every "Payment N" column present in the sheet — no fixed cap — so
   // Payment 1..12, 13, 20, 50… all import. Numbers are read in ascending order,
-  // and the matching "Payment N Date" column supplies the date.
+  // the matching "Payment N Date" column supplies the date, and an optional
+  // "Payment N Mode" column supplies a per-payment mode (UPI, NEFT, Card…).
   const nums = Object.keys(row)
     .map((k) => /^Payment (\d+)$/.exec(k)?.[1])
     .filter((v): v is string => v != null)
     .map((v) => parseInt(v, 10))
     .sort((a, b) => a - b);
 
-  const out: { amount: number; date: string | null }[] = [];
+  const out: { amount: number; date: string | null; mode?: string }[] = [];
   for (const n of nums) {
     const amt = parseAmount(row[`Payment ${n}`]);
     const dt = parseDate(row[`Payment ${n} Date`]);
-    if (amt > 0) out.push({ amount: amt, date: dt });
+    const modeRaw = row[`Payment ${n} Mode`];
+    const mode = modeRaw && modeRaw.toString().trim() ? normalizeMode(modeRaw) : undefined;
+    if (amt > 0) out.push({ amount: amt, date: dt, ...(mode ? { mode } : {}) });
   }
   return out;
 }
