@@ -16,6 +16,7 @@ type ParsedRow = {
   emi_amount: number;
   due_date: string;
   payment_mode: string;
+  payment_modes?: string[];
   total_fee: number;
   payment_link?: string | null;
   month_1?: boolean; month_2?: boolean; month_3?: boolean;
@@ -209,14 +210,14 @@ export async function POST(req: Request) {
             mode: row.payment_mode || 'Full Payment',
           });
         } else {
-          for (const pay of (row.payment_history || [])) {
-            if (!(pay.amount > 0)) continue;
+          (row.payment_history || []).forEach((pay, i) => {
+            if (!(pay.amount > 0)) return;
             payments.push({
               amount: pay.amount,
               date: pay.date || fallbackDate,
-              mode: row.payment_mode || 'Payment',
+              mode: modeAt(row, i),
             });
-          }
+          });
         }
 
         // If down payment + recorded payments fall short of the total fee, the
@@ -329,7 +330,7 @@ export async function POST(req: Request) {
         if (i <= row.emi_current) {
           status = 'paid';
           paidDate = row.payment_history?.[i - 1]?.date || instDate;
-          paymentMode = row.payment_mode;
+          paymentMode = modeAt(row, i - 1);
         } else if (instDate < today) {
           status = 'overdue';
         } else if (instDate === today) {
@@ -379,6 +380,16 @@ export async function POST(req: Request) {
     emis: createdEmis,
     errors: errors.length > 0 ? errors : undefined,
   });
+}
+
+// Mode for the Nth payment (0-based). When the sheet lists a mode per payment
+// ("UPI, Credit Card, NEFT") use the matching one; if there are fewer modes
+// than payments the last one carries forward; with no list, fall back to the
+// single payment_mode.
+function modeAt(row: ParsedRow, idx: number): string {
+  const list = row.payment_modes;
+  if (list && list.length > 0) return list[Math.min(idx, list.length - 1)];
+  return row.payment_mode || 'Payment';
 }
 
 // Most common amount in a list — used to infer the recurring EMI size from the

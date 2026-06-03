@@ -15,6 +15,7 @@ type EmiRow = {
   emi_amount: number;
   due_date: string;
   payment_mode: string;
+  payment_modes?: string[];
   total_fee: number;
   payment_link: string | null;
   month_1?: boolean; month_2?: boolean; month_3?: boolean;
@@ -490,6 +491,16 @@ function parseEmiRow(row: any, rowNum: number): EmiRow | { error: string } {
   const finalAmount = amount > 0 ? amount : 0;
   const dueDate = parseDate(dueRaw) || new Date().toISOString().substring(0, 10);
 
+  // Payment Mode may list one mode for all payments ("NEFT") or a comma-separated
+  // mode per payment ("UPI, Credit Card, NEFT") — split + normalize each so the
+  // importer can tag installment N with its own mode.
+  const payModes = (row['Payment Mode'] || row['Mode'] || row['payment_mode'] || row['mode'] || '')
+    .toString()
+    .split(',')
+    .map((m: string) => m.trim())
+    .filter(Boolean)
+    .map(normalizeMode);
+
   return {
     type: 'emi',
     email: email.toLowerCase(),
@@ -500,7 +511,8 @@ function parseEmiRow(row: any, rowNum: number): EmiRow | { error: string } {
     emi_total: total,
     emi_amount: finalAmount,
     due_date: dueDate,
-    payment_mode: normalizeMode(row['Payment Mode'] || row['Mode'] || row['payment_mode'] || row['mode']),
+    payment_mode: payModes[0] ?? normalizeMode(row['Payment Mode'] || row['Mode'] || row['payment_mode'] || row['mode']),
+    payment_modes: payModes,
     total_fee: totalFeeOverride > 0 ? totalFeeOverride : (fullPay > 0 ? fullPay : finalAmount * total),
     payment_link: (row['Payment Link'] || row['payment_link'] || '').toString().trim() || null,
     month_1: hasMonthCol(row, 1) ? parseBool(row['Month 1'] || row['month_1']) : undefined,
