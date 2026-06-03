@@ -145,7 +145,8 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
         </Button>
       </div>
 
-      {Math.abs(mismatch) > 1 && (
+      {/* Plan is SHORT of the total fee — a real gap the coach needs to fix. */}
+      {mismatch > 1 && (
         <div className="bg-amber-50/70 border border-amber-300 rounded-xl px-4 py-3.5 flex items-start gap-3">
           <span className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 grid place-items-center shrink-0">
             <AlertTriangle className="w-4 h-4" />
@@ -153,7 +154,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-[13.5px] text-amber-900">EMI plan doesn&apos;t match total fee</div>
             <div className="text-[12px] text-amber-800 mt-1 leading-relaxed">
-              Total fee is {fmtINR(totalFee)} but the plan covers only {fmtINR(planTotal)} (₹{Math.abs(mismatch).toLocaleString('en-IN')} {mismatch > 0 ? 'short' : 'extra'}).
+              Total fee is {fmtINR(totalFee)} but the plan covers only {fmtINR(planTotal)} (₹{Math.abs(mismatch).toLocaleString('en-IN')} short).
               <br />
               Down payment {fmtINR(downPayment)} + {rows.length} EMIs of {fmtINR(rows[0]?.amount ?? 0)} = {fmtINR(planTotal)}.
             </div>
@@ -163,6 +164,22 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
             >
               Fix EMI plan
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Plan exceeds the total fee — extra was collected. Not an error: show a
+          calm confirmation instead of the mismatch warning. */}
+      {mismatch < -1 && (
+        <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl px-4 py-3.5 flex items-start gap-3">
+          <span className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 grid place-items-center shrink-0">
+            <CheckCircle2 className="w-4 h-4" />
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-[13.5px] text-emerald-900">Extra amount added — existing fee is done</div>
+            <div className="text-[12px] text-emerald-800 mt-1 leading-relaxed">
+              ₹{Math.abs(mismatch).toLocaleString('en-IN')} extra collected over the total fee of {fmtINR(totalFee)}.
+            </div>
           </div>
         </div>
       )}
