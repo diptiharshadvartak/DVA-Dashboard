@@ -171,8 +171,10 @@ function PullFromGhlModal({ onClose, onDone }: { onClose: () => void; onDone: ()
   const { toast } = useToast();
   const [tag, setTag] = useState('Diamond');
   const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState<'idle' | 'connecting' | 'fetching' | 'importing' | 'done'>('idle');
   const [elapsedSec, setElapsedSec] = useState(0);
+  // Live running totals streamed from the server, one update per page.
+  // null until the first progress line arrives (the "connecting" window).
+  const [progress, setProgress] = useState<{ imported: number; updated: number; processed: number } | null>(null);
   const [result, setResult] = useState<{ imported: number; updated: number } | null>(null);
 
   // Tick the elapsed timer every second while busy.
@@ -184,37 +186,59 @@ function PullFromGhlModal({ onClose, onDone }: { onClose: () => void; onDone: ()
     return () => clearInterval(t);
   }, [busy]);
 
-  // Cycle through stages so the user sees movement even though we only get
-  // one response. Stages auto-advance based on time so it feels alive.
-  useEffect(() => {
-    if (!busy) { setStage('idle'); return; }
-    setStage('connecting');
-    const t1 = setTimeout(() => setStage('fetching'), 800);
-    const t2 = setTimeout(() => setStage('importing'), 2500);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [busy]);
-
   async function run() {
     if (!tag.trim()) { toast('Tag is required.', 'error'); return; }
-    setBusy(true); setResult(null);
+    setBusy(true); setResult(null); setProgress(null);
     try {
       const res = await fetch('/api/ghl/import-by-tag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tag: tag.trim() }),
       });
-      const text = await res.text();
-      if (!res.ok) {
+
+      // Auth / validation failures come back as a normal non-OK text response,
+      // before the stream starts.
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
         if (text.toLowerCase().includes('ghl_pit_token') || text.toLowerCase().includes('unauthorized') || text.toLowerCase().includes('token')) {
           toast('GHL token not configured. Open Settings → GoHighLevel to add it.', 'error');
         } else toast(text || 'Pull failed.', 'error');
         setBusy(false);
         return;
       }
-      const data = JSON.parse(text);
-      setResult({ imported: data.imported ?? 0, updated: data.updated ?? 0 });
-      setStage('done');
-      toast(`Imported ${data.imported ?? 0} · Updated ${data.updated ?? 0}`, 'success');
+
+      // Read the NDJSON stream line by line and update the live counters.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let final: { imported: number; updated: number } | null = null;
+      let streamError: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? ''; // keep the trailing partial line for the next chunk
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let msg: any;
+          try { msg = JSON.parse(line); } catch { continue; }
+          if (msg.type === 'progress') {
+            setProgress({ imported: msg.imported ?? 0, updated: msg.updated ?? 0, processed: msg.processed ?? 0 });
+          } else if (msg.type === 'done') {
+            final = { imported: msg.imported ?? 0, updated: msg.updated ?? 0 };
+          } else if (msg.type === 'error') {
+            streamError = msg.message ?? 'Import failed.';
+          }
+        }
+      }
+
+      if (streamError) { toast(streamError, 'error'); setBusy(false); return; }
+
+      const summary = final ?? { imported: progress?.imported ?? 0, updated: progress?.updated ?? 0 };
+      setResult(summary);
+      toast(`Imported ${summary.imported} · Updated ${summary.updated}`, 'success');
       onDone();
     } catch (e: any) {
       toast(e.message ?? 'Network error.', 'error');
@@ -223,7 +247,7 @@ function PullFromGhlModal({ onClose, onDone }: { onClose: () => void; onDone: ()
 
   function reset() {
     setResult(null);
-    setStage('idle');
+    setProgress(null);
   }
 
   return (
@@ -254,11 +278,32 @@ function PullFromGhlModal({ onClose, onDone }: { onClose: () => void; onDone: ()
               <div className="text-[15px] font-semibold text-ink-900 mb-1">Pulling from GoHighLevel</div>
               <div className="text-[12px] text-ink-500">Tag: <span className="font-mono">{tag}</span> · {elapsedSec}s elapsed</div>
             </div>
-            <div className="space-y-2">
-              <StageRow active={stage === 'connecting'} done={['fetching', 'importing'].includes(stage)} label="Connecting to GHL" />
-              <StageRow active={stage === 'fetching'} done={stage === 'importing'} label="Fetching contacts" />
-              <StageRow active={stage === 'importing'} done={false} label="Saving to dashboard" />
-            </div>
+
+            {progress ? (
+              <>
+                {/* Big live counter — climbs as each page of contacts is saved. */}
+                <div className="text-center mb-1">
+                  <div className="text-[40px] leading-none font-bold text-accent-600 tabular-nums">
+                    {progress.imported + progress.updated}
+                  </div>
+                  <div className="text-[11.5px] text-ink-500 mt-1 uppercase tracking-wider">contacts synced</div>
+                </div>
+                <div className="flex items-center justify-center gap-6 text-[13px] mt-3">
+                  <div className="text-center">
+                    <div className="text-emerald-600 font-semibold text-[18px] tabular-nums">{progress.imported}</div>
+                    <div className="text-ink-500 text-[10.5px] uppercase tracking-wider">New</div>
+                  </div>
+                  <div className="w-px h-9 bg-ink-200" />
+                  <div className="text-center">
+                    <div className="text-accent-600 font-semibold text-[18px] tabular-nums">{progress.updated}</div>
+                    <div className="text-ink-500 text-[10.5px] uppercase tracking-wider">Updated</div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-center text-[13px] text-accent-700 font-medium">Connecting to GHL…</div>
+            )}
+
             <p className="text-[11px] text-ink-400 text-center mt-5">
               This can take 30 seconds to 3 minutes depending on how many contacts. Don't close this window.
             </p>
@@ -307,25 +352,6 @@ function PullFromGhlModal({ onClose, onDone }: { onClose: () => void; onDone: ()
         </div>
       </div>
     </ModalShell>
-  );
-}
-
-function StageRow({ active, done, label }: { active: boolean; done: boolean; label: string }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className={
-        done ? 'w-5 h-5 rounded-full bg-emerald-500 grid place-items-center' :
-        active ? 'w-5 h-5 rounded-full border-2 border-accent-500 border-t-transparent animate-spin' :
-        'w-5 h-5 rounded-full border-2 border-ink-200'
-      }>
-        {done && <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 13l4 4L19 7" /></svg>}
-      </div>
-      <div className={
-        done ? 'text-[13px] text-ink-800 font-medium' :
-        active ? 'text-[13px] text-accent-700 font-medium' :
-        'text-[13px] text-ink-400'
-      }>{label}</div>
-    </div>
   );
 }
 
