@@ -1,7 +1,7 @@
 'use client';
  
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, X, Mail, Phone, MessageSquarePlus, Send, CheckCheck } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { StudentAvatar } from '@/components/ui/avatar';
@@ -22,7 +22,6 @@ type Tab = 'profile' | 'progress' | 'calls' | 'payments' | 'ai' | 'achievements'
  
 export function StudentSlideover() {
   const params = useSearchParams();
-  const router = useRouter();
   const id = params.get('student');
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('profile');
@@ -73,7 +72,10 @@ export function StudentSlideover() {
   function close() {
     const p = new URLSearchParams(params.toString());
     p.delete('student');
-    router.push(p.toString() ? `?${p.toString()}` as any : '?' as any, { scroll: false });
+    // Shallow update (mirrors openStudent in students-table): drop the
+    // `?student=` param without re-running the server page behind the slideover.
+    const qs = p.toString();
+    window.history.pushState(null, '', qs ? `?${qs}` : window.location.pathname);
   }
  
   // Child-driven patch (Progress + Profile tabs call this for optimistic updates).

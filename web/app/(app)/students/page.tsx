@@ -3,6 +3,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { StudentsTable } from '@/components/students/students-table';
 import { StudentsActions } from '@/components/students/students-actions';
+import { selectAllRows } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,29 +28,35 @@ function shortDate(iso: string): string {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
-// Split an array into fixed-size chunks. Used to keep .in(...) lists small —
-// Supabase encodes them into the request URL, and a few hundred UUIDs overflow
-// the URL length limit and make the whole request fail.
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
+// Supabase/PostgREST returns at most ~1000 rows per request, so any unbounded
+// list (the roster, the aggregates view, the overdue rows) must be read page by
+// page. selectAllRows walks .range() until a short page signals the end (and
+// fetches those pages in parallel), so the roster scales to N students — 3000,
+// 25000, whatever — with no hard ceiling.
+const fetchAll = selectAllRows;
 
 export default async function StudentsPage({ searchParams }: { searchParams: { filter?: string } }) {
   const sb = supabaseServer();
   const activeFilter = (searchParams?.filter ?? 'all') as Filter;
 
-  // Fetch ALL students (not just latest 50). 2000 ceiling lets the entire
-  // Diamond roster load. The table itself paginates client-side via
-  // PAGE_SIZE in students-table.tsx, so the user still sees 10 at a time.
-  const [{ data: students, count }, { count: overdueCount }, { data: dueAmount }] = await Promise.all([
-    sb.from('students').select('*', { count: 'exact' }).is('deleted_at', null).order('created_at', { ascending: false }).limit(2000),
+  // Fetch the ENTIRE roster — no ceiling. The table paginates client-side via
+  // PAGE_SIZE in students-table.tsx (10 at a time) but does its filtering,
+  // search and KPI maths over the full array, so it needs every row. fetchAll
+  // pages past the ~1000-row request cap, so this scales to any N students.
+  //
+  // The per-student "last call / last payment / EMI counts" used to be computed
+  // with ~25 batched round-trips over call_logs + emi_schedule. They now come
+  // from a single view (v_student_list_aggregates) that does the same
+  // aggregation in one query — see the migration of the same name. It, too, is
+  // paged so students beyond the first 1000 keep their aggregates.
+  const [students, { count }, { count: overdueCount }, dueAmount, aggRows] = await Promise.all([
+    fetchAll((f, t) => sb.from('students').select('*').is('deleted_at', null).order('created_at', { ascending: false }).range(f, t)),
+    sb.from('students').select('id', { count: 'exact', head: true }).is('deleted_at', null),
     sb.from('emi_schedule').select('id', { count: 'exact', head: true }).eq('status', 'overdue'),
-    sb.from('emi_schedule').select('amount').eq('status', 'overdue'),
+    fetchAll((f, t) => sb.from('emi_schedule').select('amount').eq('status', 'overdue').range(f, t)),
+    fetchAll((f, t) => sb.from('v_student_list_aggregates' as any).select('*').range(f, t)),
   ]);
 
-  const studentIds = (students ?? []).map((s: any) => s.id);
   // Pre-format date strings server-side so the table cells stay short and
   // don't overflow into the next column.
   const lastCallByStudent: Record<string, string> = {};
@@ -57,62 +64,25 @@ export default async function StudentsPage({ searchParams }: { searchParams: { f
   // EMI status map per student (counts by status — used for client-side EMI filter)
   const emiStatusByStudent: Record<string, { paid: number; total: number; overdue: number; upcoming: number }> = {};
 
-  if (studentIds.length > 0) {
-    // Query in batches so each .in(...) URL stays well under the length limit.
-    // A single .in() with all ~400+ student IDs overflows the URL and the
-    // request fails entirely, blanking these columns for every student. Each
-    // student is in exactly one batch, so "first row wins" (latest, since
-    // ordered desc) stays correct across batches.
-    const batches = chunk(studentIds, 50);
-
-    // Most recent call per student
-    const callResults = await Promise.all(batches.map((ids) =>
-      sb.from('call_logs')
-        .select('student_id, created_at')
-        .in('student_id', ids)
-        .order('created_at', { ascending: false })
-    ));
-    for (const { data: calls } of callResults) {
-      for (const c of (calls ?? []) as any[]) {
-        if (!lastCallByStudent[c.student_id]) {
-          lastCallByStudent[c.student_id] = relativeTime(c.created_at);
-        }
-      }
+  for (const r of (aggRows ?? []) as any[]) {
+    if (r.last_call_at) {
+      lastCallByStudent[r.student_id] = relativeTime(r.last_call_at);
     }
-
-    // Most recent paid EMI per student (with payment mode)
-    const payResults = await Promise.all(batches.map((ids) =>
-      sb.from('emi_schedule')
-        .select('student_id, paid_date, payment_mode')
-        .in('student_id', ids)
-        .eq('status', 'paid')
-        .not('paid_date', 'is', null)
-        .order('paid_date', { ascending: false })
-    ));
-    for (const { data: paidEmis } of payResults) {
-      for (const e of (paidEmis ?? []) as any[]) {
-        if (!lastPaymentByStudent[e.student_id] && e.payment_mode) {
-          lastPaymentByStudent[e.student_id] = {
-            mode: e.payment_mode,
-            date: shortDate(e.paid_date),
-          };
-        }
-      }
+    if (r.last_paid_date && r.last_payment_mode) {
+      lastPaymentByStudent[r.student_id] = {
+        mode: r.last_payment_mode,
+        date: shortDate(r.last_paid_date),
+      };
     }
-
-    // EMI status counts per student
-    const emiResults = await Promise.all(batches.map((ids) =>
-      sb.from('emi_schedule').select('student_id, status').in('student_id', ids)
-    ));
-    for (const { data: allEmis } of emiResults) {
-      for (const e of (allEmis ?? []) as any[]) {
-        const m = emiStatusByStudent[e.student_id] || { paid: 0, total: 0, overdue: 0, upcoming: 0 };
-        m.total++;
-        if (e.status === 'paid') m.paid++;
-        else if (e.status === 'overdue') m.overdue++;
-        else if (e.status === 'upcoming' || e.status === 'due_soon') m.upcoming++;
-        emiStatusByStudent[e.student_id] = m;
-      }
+    // Only record students that actually have EMI rows — matches the previous
+    // lazy-creation behaviour the client-side EMI filter relies on.
+    if ((r.emi_total ?? 0) > 0) {
+      emiStatusByStudent[r.student_id] = {
+        paid: r.emi_paid ?? 0,
+        total: r.emi_total ?? 0,
+        overdue: r.emi_overdue ?? 0,
+        upcoming: r.emi_upcoming ?? 0,
+      };
     }
   }
 

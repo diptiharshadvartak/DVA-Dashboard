@@ -110,15 +110,36 @@ export function chunk<T>(arr: T[], size: number): T[][] {
 // Fetch every row from a PostgREST select, paging past the default 1000-row
 // cap. `makeQuery(from, to)` must apply a STABLE order (e.g. .order('id')) and
 // .range(from, to) so paging can't skip or duplicate rows.
+//
+// Pages are fetched a window at a time IN PARALLEL rather than strictly one
+// after another. The result (rows and their order) is identical to a serial
+// walk — a stable order means consecutive .range() windows never overlap — but
+// a table of several thousand rows now costs ~ceil(pages / CONCURRENCY) network
+// round-trips instead of `pages`. The tail of a run may issue up to
+// CONCURRENCY-1 extra requests that come back empty; those are cheap and
+// harmless (they contribute no rows and stop the walk).
+const PAGE_SIZE = 1000;
+const PAGE_CONCURRENCY = 4;
 export async function selectAllRows<T = any>(
   makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null }>,
 ): Promise<T[]> {
   const out: T[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data } = await makeQuery(from, from + 999);
-    if (!data || data.length === 0) break;
-    out.push(...data);
-    if (data.length < 1000) break;
+  for (let base = 0; ; base += PAGE_SIZE * PAGE_CONCURRENCY) {
+    const window = await Promise.all(
+      Array.from({ length: PAGE_CONCURRENCY }, (_, i) => {
+        const from = base + i * PAGE_SIZE;
+        return makeQuery(from, from + PAGE_SIZE - 1);
+      }),
+    );
+    let last = false;
+    for (const { data } of window) {
+      const rows = data ?? [];
+      out.push(...rows);
+      // A short (or empty) page is the end of the table — stop before pushing
+      // any later page in this window (those start past the end and are empty).
+      if (rows.length < PAGE_SIZE) { last = true; break; }
+    }
+    if (last) break;
   }
   return out;
 }

@@ -83,35 +83,74 @@ export async function POST(req: Request) {
       const contacts = page.contacts ?? [];
       if (!contacts.length) break;
 
+      // ── Batch the whole page instead of one DB round-trip per contact ──
+      // The old path ran a SELECT + an INSERT/UPDATE for EVERY contact, in
+      // series — ~200 round-trips per 100-contact page, which is what made a
+      // full import take minutes. We now do one SELECT for all emails on the
+      // page and one batched upsert + one batched insert, so each page costs ~3
+      // round-trips. The data written (and the tag-merge) is identical.
+
+      // GHL can return the same email on more than one contact within a page;
+      // collapse those here (union their DVA tags, last contact wins for the
+      // scalar fields) so a single email maps to a single student row — the same
+      // end state the old sequential insert-then-update produced.
+      const byEmail = new Map<string, { email: string; tags: string[]; c: any }>();
       for (const c of contacts) {
         if (!c.email) continue;
-        const { data: existing } = await admin
-          .from('students')
-          .select('id, tags')
-          .eq('email', c.email.toLowerCase())
-          .maybeSingle();
-
-        const filteredFromGhl = filterDvaTags(c.tags);
-
-        // Merge with existing tags so coaches' manual additions aren't lost.
-        const existingTags = ((existing as any)?.tags ?? []) as string[];
-        const merged = Array.from(new Set([...existingTags, ...filteredFromGhl]));
-
-        const payload = {
-          ghl_contact_id: c.id,
-          email: c.email.toLowerCase(),
-          first_name: c.firstName ?? null,
-          last_name: c.lastName ?? null,
-          mobile: c.phone ?? null,
-          tags: merged,
-        };
-        if (existing) {
-          await admin.from('students').update(payload).eq('id', existing.id);
-          updated++;
+        const email = c.email.toLowerCase();
+        const tags = filterDvaTags(c.tags);
+        const prev = byEmail.get(email);
+        if (prev) {
+          prev.tags = Array.from(new Set([...prev.tags, ...tags]));
+          prev.c = c;
         } else {
-          await admin.from('students').insert(payload);
-          imported++;
+          byEmail.set(email, { email, tags, c });
         }
+      }
+
+      const emails = Array.from(byEmail.keys());
+      if (emails.length) {
+        // One lookup for every existing student on this page (was one per contact).
+        const { data: existingRows } = await admin
+          .from('students')
+          .select('id, email, tags')
+          .in('email', emails);
+        const existingByEmail = new Map<string, { id: string; tags: string[] }>();
+        for (const r of (existingRows ?? []) as any[]) {
+          existingByEmail.set(String(r.email).toLowerCase(), {
+            id: r.id,
+            tags: ((r.tags ?? []) as string[]),
+          });
+        }
+
+        const toUpdate: any[] = [];
+        const toInsert: any[] = [];
+        for (const { email, tags, c } of byEmail.values()) {
+          const existing = existingByEmail.get(email);
+          // Merge with existing tags so coaches' manual additions aren't lost.
+          const merged = Array.from(new Set([...(existing?.tags ?? []), ...tags]));
+          const payload: any = {
+            ghl_contact_id: c.id,
+            email,
+            first_name: c.firstName ?? null,
+            last_name: c.lastName ?? null,
+            mobile: c.phone ?? null,
+            tags: merged,
+          };
+          if (existing) {
+            // Upsert on the primary key: only the columns above are written, so
+            // other student fields stay untouched — same as the old .update().
+            payload.id = existing.id;
+            toUpdate.push(payload);
+            updated++;
+          } else {
+            toInsert.push(payload);
+            imported++;
+          }
+        }
+
+        if (toUpdate.length) await admin.from('students').upsert(toUpdate);
+        if (toInsert.length) await admin.from('students').insert(toInsert);
       }
 
       startAfterId = page.meta?.startAfterId ?? page.contacts[page.contacts.length - 1]?.id;

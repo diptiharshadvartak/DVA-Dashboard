@@ -4,6 +4,7 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { EmiTable } from '@/components/emi/emi-table';
 import { EmiActions } from '@/components/emi/emi-actions';
 import { requirePermission } from '@/lib/check-permission';
+import { selectAllRows } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,18 +46,15 @@ export default async function EmiPage({ searchParams }: { searchParams: { tab?: 
 
   // Fetch ALL emi rows. A single query is capped at 1000 rows by PostgREST, so
   // beyond that the later (future-dated) rows were silently dropped —
-  // undercounting "Upcoming" and hiding rows from the table. Paginate to get all.
-  const all: any[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data } = await sb.from('emi_schedule')
+  // undercounting "Upcoming" and hiding rows from the table. selectAllRows pages
+  // past the cap (and fetches those pages in parallel). The secondary sort on
+  // the unique id makes the total order stable, so range-based pagination can't
+  // skip or duplicate rows that share a due_date.
+  const all: any[] = await selectAllRows((from, to) =>
+    sb.from('emi_schedule')
       .select('*, students!inner(id, first_name, last_name, email, mobile, ghl_contact_id)')
-      // Secondary sort on the unique id makes the total order stable, so
-      // range-based pagination can't skip or duplicate rows that share a due_date.
-      .order('due_date').order('id').range(from, from + 999);
-    if (!data || data.length === 0) break;
-    all.push(...(data as any[]));
-    if (data.length < 1000) break;
-  }
+      .order('due_date').order('id').range(from, to),
+  );
   const due      = all.filter((e) => e.status === 'due_soon' || (e.status !== 'paid' && e.due_date && new Date(e.due_date) <= new Date(Date.now() + 7 * 86400000) && new Date(e.due_date) >= new Date()));
   const overdue  = all.filter((e) => e.status === 'overdue');
   const upcoming = all.filter((e) => e.status === 'upcoming');

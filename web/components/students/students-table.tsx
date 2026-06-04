@@ -146,7 +146,12 @@ export function StudentsTable({
   function openStudent(id: string) {
     const p = new URLSearchParams(params.toString());
     p.set('student', id);
-    router.push(`?${p.toString()}` as any, { scroll: false });
+    // Shallow URL update: opening the slideover only needs the `?student=` param
+    // for the (client-side) slideover to read via useSearchParams. Using
+    // history.pushState instead of router.push keeps the URL shareable/bookmarkable
+    // but avoids re-running this force-dynamic server page (which re-fetches the
+    // whole roster) just to open a panel.
+    window.history.pushState(null, '', `?${p.toString()}`);
   }
 
   const filterBanner =
