@@ -461,7 +461,9 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                           <Copy className="w-3 h-3" /> Copy
                         </button>
                       </>
-                    ) : (
+                    ) : !student?.payment_link ? (
+                      // Hidden when the student has a default payment link set —
+                      // re-appears automatically if that default link is removed.
                       <button
                         onClick={() => setLinkEmi(r)}
                         className="text-[11.5px] font-medium text-blue-700 hover:underline inline-flex items-center gap-1"
@@ -470,7 +472,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                         <LinkIcon className="w-3 h-3" />
                         Get link
                       </button>
-                    )}
+                    ) : null}
                     {(r as any).cashfree_link_id && (
                       <>
                         <span className="text-ink-300">·</span>
@@ -485,7 +487,9 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                         </button>
                       </>
                     )}
-                    <span className="text-ink-300">·</span>
+                    {((r as any).cashfree_link_url || !student?.payment_link || (r as any).cashfree_link_id) && (
+                      <span className="text-ink-300">·</span>
+                    )}
                     <button
                       onClick={() => setReminderEmi(r.id)}
                       className="text-[11.5px] font-medium text-ink-600 hover:text-ink-900 hover:underline"
