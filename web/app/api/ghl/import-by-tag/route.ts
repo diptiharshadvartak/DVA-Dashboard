@@ -160,6 +160,16 @@ export async function POST(req: Request) {
             // skip so it is neither rewritten nor double-counted.
             if (seenEmails.has(email)) continue;
             const tags = filterDvaTags(c.tags);
+            // Always keep the tag we pulled by, even if it isn't in the DVA
+            // allowlist — otherwise the pulled students wouldn't show that tag or
+            // appear under it in the tag filter. Preserve the contact's own casing
+            // when present; fall back to the requested tag.
+            const pulledTag = (Array.isArray(c.tags) ? c.tags.map((t: any) => String(t)) : String(c.tags ?? '').split(','))
+              .map((t: string) => t.trim())
+              .find((t: string) => t.toLowerCase() === wantedTag) ?? tag.trim();
+            if (pulledTag && !tags.some((t) => t.toLowerCase() === pulledTag.toLowerCase())) {
+              tags.push(pulledTag);
+            }
             const prev = byEmail.get(email);
             if (prev) {
               prev.tags = Array.from(new Set([...prev.tags, ...tags]));
