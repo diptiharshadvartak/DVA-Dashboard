@@ -2,8 +2,9 @@
  
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { ArrowLeft, X, Mail, Phone, MessageSquarePlus, Send, CheckCheck } from 'lucide-react';
+import { ArrowLeft, X, Mail, Phone, MessageSquarePlus, Send, CheckCheck, Trash2, Loader2 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase/client';
+import { useToast } from '@/components/shell/toast-region';
 import { StudentAvatar } from '@/components/ui/avatar';
 import { StatusPill } from '@/components/ui/status-pill';
 import { studentStatusFromEnd, cn } from '@/lib/utils';
@@ -28,9 +29,13 @@ export function StudentSlideover() {
   const [student, setStudent] = useState<Student | null>(null);
   const [callsCount, setCallsCount] = useState(0);
   const [reminderOpen, setReminderOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const sb = useMemo(() => supabaseBrowser(), []);
+  const { toast } = useToast();
  
   useEffect(() => {
+    setConfirmDelete(false);
     if (id) {
       setOpen(true);
       setTab('profile');
@@ -81,6 +86,23 @@ export function StudentSlideover() {
   // Child-driven patch (Progress + Profile tabs call this for optimistic updates).
   function patchStudent(patch: Partial<Student>) {
     setStudent((cur) => (cur ? { ...cur, ...patch } : cur));
+  }
+
+  // Soft-delete: set deleted_at so the student drops out of every list (which
+  // all filter `deleted_at IS NULL`) while their payment history and records are
+  // preserved and can be restored by clearing the column. Avoids any cascade.
+  async function deleteStudent() {
+    if (!student) return;
+    setDeleting(true);
+    const { error } = await sb
+      .from('students')
+      .update({ deleted_at: new Date().toISOString() } as any)
+      .eq('id', student.id);
+    setDeleting(false);
+    if (error) { toast(error.message ?? 'Failed to delete student', 'error'); return; }
+    toast(`${student.first_name ?? 'Student'} deleted.`, 'success');
+    setConfirmDelete(false);
+    close();
   }
  
   return (
@@ -165,7 +187,13 @@ export function StudentSlideover() {
                 <button onClick={() => setReminderOpen(true)} className="h-9 px-3 rounded-lg border border-ink-200 text-[13px] font-medium hover:bg-ink-50 flex items-center gap-1.5">
                   <Send className="w-4 h-4" /> Send reminder
                 </button>
-                <div className="ml-auto flex items-center gap-2 text-[11.5px] text-ink-500">
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="ml-auto h-9 px-3 rounded-lg border border-rose-200 text-rose-700 text-[13px] font-medium hover:bg-rose-50 flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete
+                </button>
+                <div className="flex items-center gap-2 text-[11.5px] text-ink-500">
                   <CheckCheck className="w-3.5 h-3.5 text-ink-400" /> Saved
                 </div>
               </div>
@@ -182,6 +210,41 @@ export function StudentSlideover() {
           onClose={() => setReminderOpen(false)}
           studentId={student.id}
         />
+      )}
+
+      {student && confirmDelete && (
+        <div className="fixed inset-0 z-[100] grid place-items-center px-4">
+          <div onClick={() => !deleting && setConfirmDelete(false)} className="absolute inset-0 bg-black/50" />
+          <div className="relative bg-white rounded-2xl shadow-pop w-full max-w-[400px] p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full grid place-items-center shrink-0 bg-rose-50 text-rose-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="flex-1 pt-1">
+                <div className="text-[16px] font-semibold text-ink-900 leading-tight">Delete student?</div>
+                <div className="text-[13px] text-ink-600 mt-1.5 leading-snug">
+                  {student.first_name} {student.last_name} will be removed from the list. Their payment history and records are kept and can be restored later.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="h-9 px-4 rounded-lg border border-ink-200 text-[13px] font-medium text-ink-700 hover:bg-ink-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteStudent}
+                disabled={deleting}
+                className="h-9 px-5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[13px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {deleting ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</> : 'Delete student'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
