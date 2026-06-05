@@ -185,6 +185,11 @@ export async function POST(req: Request) {
               });
             }
 
+            // Classify only here — the counts are incremented AFTER a confirmed
+            // write below, so the streamed totals reflect what actually persisted
+            // rather than what we intended to write (the old code counted before
+            // writing and never checked the result, which inflated "New"/"Updated"
+            // whenever a write silently failed).
             const toUpdate: any[] = [];
             const toInsert: any[] = [];
             for (const { email, tags, c } of byEmail.values()) {
@@ -204,15 +209,49 @@ export async function POST(req: Request) {
                 // other student fields stay untouched — same as the old .update().
                 payload.id = existing.id;
                 toUpdate.push(payload);
-                updated++;
               } else {
                 toInsert.push(payload);
-                imported++;
               }
             }
 
-            if (toUpdate.length) await admin.from('students').upsert(toUpdate);
-            if (toInsert.length) await admin.from('students').insert(toInsert);
+            // Updates key on the PK, so the bulk upsert is safe; fall back to
+            // per-row only if the batch errors, so one bad row can't drop the rest.
+            if (toUpdate.length) {
+              const { error } = await admin.from('students').upsert(toUpdate);
+              if (!error) {
+                updated += toUpdate.length;
+              } else {
+                for (const row of toUpdate) {
+                  const { error: e } = await admin.from('students').upsert(row);
+                  if (!e) updated++;
+                }
+              }
+            }
+
+            // Inserts share ONE statement, so a single unique violation (a reused
+            // ghl_contact_id, or a lower(email) row the lookup missed) would roll
+            // back the WHOLE page. Try the fast bulk insert first; on any error,
+            // retry row-by-row, and for a row that collides with an existing
+            // student, update it by email instead — so nothing is silently lost
+            // and the counts stay honest (only count rows that actually changed).
+            if (toInsert.length) {
+              const { error } = await admin.from('students').insert(toInsert);
+              if (!error) {
+                imported += toInsert.length;
+              } else {
+                for (const row of toInsert) {
+                  const { error: e } = await admin.from('students').insert(row);
+                  if (!e) { imported++; continue; }
+                  const { id: _omit, ...rest } = row;
+                  const { data: upd } = await admin
+                    .from('students')
+                    .update(rest)
+                    .eq('email', row.email)
+                    .select('id');
+                  if (upd && upd.length > 0) updated++;
+                }
+              }
+            }
           }
 
           // Push the running totals to the client after each page.
