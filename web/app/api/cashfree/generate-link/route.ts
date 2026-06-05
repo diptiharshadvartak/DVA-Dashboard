@@ -176,14 +176,17 @@ export async function POST(req: Request) {
       }, { status: 500 });
     }
 
-    // Save to EMI
+    // Save to EMI. Guard on status so a webhook that marked this EMI paid in the
+    // brief window between the paid-check above and here can't be clobbered back
+    // to an ACTIVE link. Normal flow is unaffected (the route already returns
+    // early when the EMI is paid, so this row is never paid at this point).
     await admin.from('emi_schedule').update({
       cashfree_link_id: link.link_id,
       cashfree_link_url: link.link_url,
       cashfree_link_status: link.link_status,
       cashfree_link_created_at: link.link_created_at,
       payment_link: link.link_url,   // also fill the generic payment_link field
-    } as any).eq('id', emiId);
+    } as any).eq('id', emiId).neq('status', 'paid');
 
     // Audit log
     await admin.from('cashfree_events').insert({

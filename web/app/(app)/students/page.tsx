@@ -51,11 +51,16 @@ export default async function StudentsPage({ searchParams }: { searchParams: { f
   // aggregation in one query — see the migration of the same name. It, too, is
   // paged so students beyond the first 1000 keep their aggregates.
   const [students, { count }, { count: overdueCount }, dueAmount, aggRows] = await Promise.all([
-    fetchAll((f, t) => sb.from('students').select('*').is('deleted_at', null).order('created_at', { ascending: false }).range(f, t)),
+    // selectAllRows pages in parallel windows, so every paged query needs a
+    // UNIQUE, stable sort or consecutive .range() windows can overlap/gap and
+    // silently drop or duplicate rows past 1000. created_at isn't unique (bulk
+    // imports share timestamps), so add id as a tiebreaker; the visible order is
+    // unchanged. The amount/aggregate reads just need any unique order.
+    fetchAll((f, t) => sb.from('students').select('*').is('deleted_at', null).order('created_at', { ascending: false }).order('id', { ascending: true }).range(f, t)),
     sb.from('students').select('id', { count: 'exact', head: true }).is('deleted_at', null),
     sb.from('emi_schedule').select('id', { count: 'exact', head: true }).eq('status', 'overdue'),
-    fetchAll((f, t) => sb.from('emi_schedule').select('amount').eq('status', 'overdue').range(f, t)),
-    fetchAll((f, t) => sb.from('v_student_list_aggregates' as any).select('*').range(f, t)),
+    fetchAll((f, t) => sb.from('emi_schedule').select('amount').eq('status', 'overdue').order('id', { ascending: true }).range(f, t)),
+    fetchAll((f, t) => sb.from('v_student_list_aggregates' as any).select('*').order('student_id', { ascending: true }).range(f, t)),
   ]);
 
   // Pre-format date strings server-side so the table cells stay short and
