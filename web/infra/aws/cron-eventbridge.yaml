@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Scheduler for the dva-dashboard cron endpoints. Creates one Lambda that calls
+  an /api/cron/* endpoint with the CRON_SECRET, plus three EventBridge schedules
+  (daily-09, daily-10, end-of-month) that invoke it on time. This replaces what
+  Vercel Cron does automatically; needed only when hosting outside Vercel.
+
+Parameters:
+  AppUrl:
+    Type: String
+    Description: Base URL of the deployed app, no trailing slash. e.g. https://app.example.com
+  CronSecret:
+    Type: String
+    NoEcho: true
+    Description: The same secret you set as CRON_SECRET in the app's environment.
+
+Resources:
+  # --- Role the Lambda runs as (just needs to write logs) ---
+  LambdaExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # --- The "driver": calls one cron endpoint with the secret header ---
+  CronLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: dva-dashboard-cron
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 70           # endpoints set maxDuration 60; give headroom
+      Role: !GetAtt LambdaExecRole.Arn
+      Environment:
+        Variables:
+          APP_URL: !Ref AppUrl
+          CRON_SECRET: !Ref CronSecret
+      Code:
+        ZipFile: |
+          // Calls APP_URL + event.path with the Authorization: Bearer <secret>
+          // header. Node 20 has global fetch.
+          exports.handler = async (event) => {
+            const path = event && event.path;
+            if (!path) throw new Error('missing "path" in schedule input');
+            const url = process.env.APP_URL + path;
+            const res = await fetch(url, {
+              method: 'GET',
+              headers: { Authorization: 'Bearer ' + process.env.CRON_SECRET },
+            });
+            const body = await res.text();
+            console.log(JSON.stringify({ path, status: res.status, body: body.slice(0, 500) }));
+            if (!res.ok) throw new Error('cron ' + path + ' returned ' + res.status);
+            return { path, status: res.status };
+          };
+
+  # --- Role EventBridge Scheduler uses to invoke the Lambda ---
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-cron-lambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CronLambda.Arn
+
+  # --- The three schedules (the "alarm clocks") ---
+  # daily-09: 09:00 IST every day
+  ScheduleDaily09:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: dva-cron-daily-09
+      ScheduleExpression: cron(0 9 * * ? *)
+      ScheduleExpressionTimezone: Asia/Kolkata
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt CronLambda.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{"path":"/api/cron/daily-09"}'
+
+  # daily-10: 10:00 IST every day
+  ScheduleDaily10:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: dva-cron-daily-10
+      ScheduleExpression: cron(0 10 * * ? *)
+      ScheduleExpressionTimezone: Asia/Kolkata
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt CronLambda.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{"path":"/api/cron/daily-10"}'
+
+  # end-of-month: kept on the original UTC schedule (18:55 UTC on days 28-31),
+  # matching vercel.json exactly.
+  ScheduleEndOfMonth:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: dva-cron-end-of-month
+      ScheduleExpression: cron(55 18 28-31 * ? *)
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt CronLambda.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{"path":"/api/cron/end-of-month"}'
+
+Outputs:
+  LambdaName:
+    Description: The cron Lambda function name
+    Value: !Ref CronLambda
