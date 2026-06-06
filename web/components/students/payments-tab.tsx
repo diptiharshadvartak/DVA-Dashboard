@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IndianRupee, Plus, CheckCircle2, AlertTriangle, Pencil, Link as LinkIcon, Copy, RefreshCw } from 'lucide-react';
+import { IndianRupee, Plus, CheckCircle2, AlertTriangle, Pencil, Link as LinkIcon, Copy, RefreshCw, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { useToast } from '@/components/shell/toast-region';
@@ -51,6 +51,7 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
   const [linkEmi, setLinkEmi] = useState<Emi | null>(null);
   const [dueDateEmi, setDueDateEmi] = useState<Emi | null>(null);
   const [busySync, setBusySync] = useState<string | null>(null);
+  const [busyRemove, setBusyRemove] = useState<string | null>(null);
   const [paymentIdsByEmi, setPaymentIdsByEmi] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
   // Bumped after every load() so child sections (e.g. Payment History) re-fetch
@@ -116,6 +117,30 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
       return false;
     } finally {
       if (!silent) setBusySync(null);
+    }
+  }
+
+  // Undo a generated link: cancel it at Cashfree and clear the stored fields so
+  // the row reverts to the "Get link" state. Confirms first since it cancels a
+  // link the student might still be intending to pay.
+  async function removeCashfreeLink(emiId: string) {
+    if (busyRemove) return;
+    if (!window.confirm('Remove this payment link? It will be cancelled on Cashfree and the installment will go back to "Get link".')) return;
+    setBusyRemove(emiId);
+    try {
+      const res = await fetch('/api/cashfree/remove-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emiId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error ?? 'Failed to remove link');
+      toast('Payment link removed.', 'success');
+      await load();
+    } catch (e: any) {
+      toast(e.message ?? 'Failed to remove link', 'error');
+    } finally {
+      setBusyRemove(null);
     }
   }
 
@@ -498,6 +523,20 @@ export function PaymentsTab({ studentId }: { studentId: string }) {
                         >
                           <RefreshCw className={`w-3 h-3 ${busySync === r.id ? 'animate-spin' : ''}`} />
                           {busySync === r.id ? 'Syncing…' : 'Sync'}
+                        </button>
+                      </>
+                    )}
+                    {(r as any).cashfree_link_url && (
+                      <>
+                        <span className="text-ink-300">·</span>
+                        <button
+                          onClick={() => removeCashfreeLink(r.id)}
+                          disabled={busyRemove === r.id}
+                          className="text-[11.5px] font-medium text-rose-600 hover:text-rose-800 inline-flex items-center gap-1 disabled:opacity-50"
+                          title="Remove this payment link — cancels it on Cashfree and reverts the row to 'Get link'"
+                        >
+                          <Undo2 className="w-3 h-3" />
+                          {busyRemove === r.id ? 'Removing…' : 'Undo'}
                         </button>
                       </>
                     )}
