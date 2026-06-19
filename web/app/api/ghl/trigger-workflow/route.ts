@@ -32,10 +32,13 @@ export async function POST(req: Request) {
 
   const { data: student } = await sb
     .from('students')
-    .select('id, ghl_contact_id, first_name, last_name, email, mobile, payment_type')
+    .select('id, ghl_contact_id, first_name, last_name, email, mobile, payment_type, deleted_at')
     .eq('id', body.studentId)
     .maybeSingle();
   if (!student) return new NextResponse('student not found', { status: 404 });
+  // Deleted students are hidden across the UI; never message them even if a
+  // stale client (or direct API call) targets one.
+  if ((student as any).deleted_at) return new NextResponse('student is deleted', { status: 410 });
 
   const eventId = (body.eventId ?? 'emi.reminder_due') as any;
 
