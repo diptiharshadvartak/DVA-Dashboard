@@ -16,54 +16,32 @@ export const maxDuration = 300;
 // body: { tag: string }
 // Paginates through GHL contacts with the given tag and upserts them into students.
 //
-// IMPORTANT: GHL contacts often carry 50+ marketing/campaign tags from years of
-// workflows (bb15, gps24, bfs2025-l1n, etc.) which are NOT relevant to DVA's
-// dashboard tracking. We filter to a small allowlist matching what the
-// Diamond Master Sheet actually uses.
-//
-// Edit ALLOWED_TAGS below to change which GHL tags survive import. The match
-// is case-insensitive against the FULL tag string.
+// Tags are imported DYNAMICALLY: whatever tags a GHL contact carries are kept
+// as-is and flow straight into students.tags, so they show up under the Tags
+// filter without anyone editing an allowlist here. (Previously a hardcoded
+// ALLOWED_TAGS list silently dropped any tag it didn't know about, which is why
+// a freshly-added contact tag never appeared in the filter.)
 
-const ALLOWED_TAGS = new Set([
-  // DVA tracking codes from Master Sheet (Tags column)
-  's',
-  'sh',
-  'shdc',
-  'sdc',
-  'dc',
-  'j',
-  'js',
-  'jsdc',
-  'jdc',
-  'j-incomplete',
-  // Useful status indicators that map cleanly
-  'diamond',
-  'diamond waitlist',
-  'diamond-interested',
-  'alumni',
-  'ex-diamond',
-  'urgent',
-  'absent',
-  'on-hold',
-]);
-
-function filterDvaTags(rawTags: unknown): string[] {
+function normalizeTags(rawTags: unknown): string[] {
   if (!rawTags) return [];
-  // GHL can return tags as array OR sometimes a comma-separated string.
+  // GHL can return tags as an array OR sometimes a comma-separated string.
   const arr: string[] = Array.isArray(rawTags)
     ? rawTags.map((t) => String(t))
-    : String(rawTags).split(',').map((t) => t.trim());
+    : String(rawTags).split(',');
 
+  // Trim, drop blanks, and dedupe (case-insensitive) while preserving the
+  // contact's original casing and first-seen order.
   const kept: string[] = [];
+  const seen = new Set<string>();
   for (const raw of arr) {
-    const normalized = raw.trim().toLowerCase();
-    if (ALLOWED_TAGS.has(normalized)) {
-      // Preserve original casing from GHL
-      kept.push(raw.trim());
-    }
+    const value = raw.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(value);
   }
-  // Dedupe preserving order.
-  return Array.from(new Set(kept));
+  return kept;
 }
 
 export async function POST(req: Request) {
@@ -159,16 +137,12 @@ export async function POST(req: Request) {
             // Already handled on an earlier page (a duplicate-email contact) →
             // skip so it is neither rewritten nor double-counted.
             if (seenEmails.has(email)) continue;
-            const tags = filterDvaTags(c.tags);
-            // Always keep the tag we pulled by, even if it isn't in the DVA
-            // allowlist — otherwise the pulled students wouldn't show that tag or
-            // appear under it in the tag filter. Preserve the contact's own casing
-            // when present; fall back to the requested tag.
-            const pulledTag = (Array.isArray(c.tags) ? c.tags.map((t: any) => String(t)) : String(c.tags ?? '').split(','))
-              .map((t: string) => t.trim())
-              .find((t: string) => t.toLowerCase() === wantedTag) ?? tag.trim();
-            if (pulledTag && !tags.some((t) => t.toLowerCase() === pulledTag.toLowerCase())) {
-              tags.push(pulledTag);
+            // Keep every tag the contact carries (see normalizeTags). The tag we
+            // pulled by is part of that set; guarantee it's present even on the
+            // rare contact whose tag list GHL didn't echo back on the search row.
+            const tags = normalizeTags(c.tags);
+            if (!tags.some((t) => t.toLowerCase() === wantedTag)) {
+              tags.push(tag.trim());
             }
             const prev = byEmail.get(email);
             if (prev) {
@@ -213,6 +187,11 @@ export async function POST(req: Request) {
                 last_name: c.lastName ?? null,
                 mobile: c.phone ?? null,
                 tags: merged,
+                // Pulling a contact from GHL should make it appear in the list,
+                // so revive any previously soft-deleted row (deleted_at IS NULL is
+                // what every student list filters on). Without this an existing
+                // deleted row gets "Updated" but stays hidden.
+                deleted_at: null,
               };
               if (existing) {
                 // Upsert on the primary key: only the columns above are written, so

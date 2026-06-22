@@ -6,8 +6,7 @@ import { supabaseBrowser } from '@/lib/supabase/client';
 import { useToast } from '@/components/shell/toast-region';
 import { Button } from '@/components/ui/button';
 import { fmtINR } from '@/lib/utils';
-
-const MODES = ['UPI', 'Bank Transfer', 'Cash', 'Card', 'Cheque', 'Wallet', 'Other'];
+import { PAYMENT_TYPES } from '@/lib/payment-types';
 
 export function EditPaymentModal({
   open, onClose, onSaved,
@@ -32,6 +31,14 @@ export function EditPaymentModal({
   const [reference, setReference] = useState(initialReference || '');
   const [busy, setBusy] = useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = useState(false);
+
+  // New picks are limited to UPI / NEFT / Card (the single source of truth), but
+  // keep an existing record's legacy mode (e.g. "Bank Transfer") selectable so
+  // editing an old payment doesn't silently rewrite its mode.
+  const modeOptions: string[] =
+    initialMode && !(PAYMENT_TYPES as readonly string[]).includes(initialMode)
+      ? [initialMode, ...PAYMENT_TYPES]
+      : [...PAYMENT_TYPES];
 
   if (!open) return null;
 
@@ -130,7 +137,7 @@ export function EditPaymentModal({
 
               <Field label="Payment mode">
                 <select value={mode} onChange={(e) => setMode(e.target.value)} className={fieldCls}>
-                  {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                  {modeOptions.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </Field>
 

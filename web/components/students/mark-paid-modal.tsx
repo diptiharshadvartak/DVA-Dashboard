@@ -6,7 +6,7 @@ import { supabaseBrowser } from '@/lib/supabase/client';
 import { useToast } from '@/components/shell/toast-region';
 import { Button } from '@/components/ui/button';
 import { fmtINR } from '@/lib/utils';
-import { backfillPaymentType } from '@/lib/payment-types';
+import { backfillPaymentType, PAYMENT_TYPES } from '@/lib/payment-types';
 
 // Captures payment date + payment mode + optional reference and marks an EMI paid.
 // Reuses the existing emi_schedule columns:
@@ -15,15 +15,8 @@ import { backfillPaymentType } from '@/lib/payment-types';
 //   payment_mode = chosen mode
 //   payment_link = optional reference (e.g. txn id) — reused since it's a free text column
 
-const MODES = [
-  'UPI',
-  'Bank Transfer',
-  'Cash',
-  'Card',
-  'Cheque',
-  'Wallet',
-  'Other',
-];
+// Payment-mode options come from the single source of truth (UPI / NEFT / Card).
+const MODES = PAYMENT_TYPES;
 
 export function MarkPaidModal({
   open, onClose, onSaved, emiId, studentId, amount, installmentLabel,

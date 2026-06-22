@@ -6,7 +6,7 @@ import { supabaseBrowser } from '@/lib/supabase/client';
 import { useToast } from '@/components/shell/toast-region';
 import { Button } from '@/components/ui/button';
 import { fmtINR, fmtDate } from '@/lib/utils';
-import { backfillPaymentType } from '@/lib/payment-types';
+import { backfillPaymentType, PAYMENT_TYPES } from '@/lib/payment-types';
 
 // Collect a payment toward the outstanding balance with an EDITABLE amount.
 // Two modes:
@@ -22,7 +22,8 @@ import { backfillPaymentType } from '@/lib/payment-types';
 //       there are no unpaid installments left (a genuinely extra collection).
 //       The link is shown here to copy/send; the webhook (or Sync) marks it paid.
 
-const MODES = ['UPI', 'Bank Transfer', 'NEFT', 'Cash', 'Card', 'Cheque', 'Wallet', 'Other'];
+// Payment-mode options come from the single source of truth (UPI / NEFT / Card).
+const MODES = PAYMENT_TYPES;
 
 type UnpaidEmi = {
   id: string;

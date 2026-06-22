@@ -78,7 +78,7 @@ export function Topbar({ user }: { user: SessionUser }) {
         sb.from('emi_schedule').select('amount').eq('status', 'overdue'),
         // Include overdue follow-ups too (anything due today or before)
         sb.from('call_logs')
-          .select('id, student_id, next_action, next_action_due, student:students(first_name, last_name)')
+          .select('id, student_id, next_action, next_action_due, created_at, student:students(first_name, last_name)')
           .lte('next_action_due', today)
           .not('next_action', 'is', null)
           .order('next_action_due', { ascending: false })
@@ -94,7 +94,31 @@ export function Topbar({ user }: { user: SessionUser }) {
       ]);
       const rows = (overdueRows.data ?? []) as any[];
       const followupRows = (followupsQuery.data ?? []) as any[];
-      const followupItems: FollowupItem[] = followupRows.map((r: any) => ({
+
+      // Drop follow-ups that are already "completed" — i.e. a newer call has
+      // been logged for that student since the follow-up was set. This is the
+      // same rule the Follow-ups page uses; without it the bell keeps showing
+      // follow-ups the coach has already actioned.
+      const fuStudentIds = Array.from(new Set(followupRows.map((r: any) => r.student_id)));
+      const latestCallPerStudent: Record<string, string> = {};
+      if (fuStudentIds.length > 0) {
+        const { data: allCalls } = await sb
+          .from('call_logs')
+          .select('student_id, created_at')
+          .in('student_id', fuStudentIds);
+        for (const c of ((allCalls ?? []) as any[])) {
+          const cur = latestCallPerStudent[c.student_id];
+          if (!cur || new Date(c.created_at).getTime() > new Date(cur).getTime()) {
+            latestCallPerStudent[c.student_id] = c.created_at;
+          }
+        }
+      }
+      const pendingFollowups = followupRows.filter((r: any) => {
+        const latest = latestCallPerStudent[r.student_id];
+        return !(latest && new Date(latest).getTime() > new Date(r.created_at).getTime());
+      });
+
+      const followupItems: FollowupItem[] = pendingFollowups.map((r: any) => ({
         id: r.id,
         student_id: r.student_id,
         student_name: r.student

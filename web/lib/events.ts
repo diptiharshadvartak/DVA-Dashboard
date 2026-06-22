@@ -143,6 +143,10 @@ export async function sweepEmiRemindersDue(
       .eq('due_date', remindOn)
       .neq('status', 'paid')
       .neq('status', 'cancelled')
+      // Never remind soft-deleted students. Deleting a student only sets
+      // deleted_at (no EMI cascade), so their installments survive and would
+      // otherwise still fire here even though they're hidden everywhere in the UI.
+      .is('students.deleted_at', null)
       .order('id')
       .range(f, t),
   );
@@ -268,7 +272,7 @@ export async function sweepFollowupsDue(sb: AnyClient, workflowId: string | null
     .from('call_logs')
     .select(`
       id, student_id, next_action, next_action_due,
-      student:students(first_name, last_name, email, mobile, ghl_contact_id)
+      student:students(first_name, last_name, email, mobile, ghl_contact_id, deleted_at)
     `)
     .eq('next_action_due', today)
     .not('next_action', 'is', null);
@@ -276,6 +280,9 @@ export async function sweepFollowupsDue(sb: AnyClient, workflowId: string | null
   let fired = 0;
   for (const r of (rows ?? []) as any[]) {
     if (!r.student) continue;
+    // Skip soft-deleted students (the embed is a left join, so a row survives
+    // here even after the student is deleted — guard explicitly).
+    if (r.student.deleted_at) continue;
 
     // Skip if already fired for this call_log id
     const dup = await sb.from('reminders').select('id')
