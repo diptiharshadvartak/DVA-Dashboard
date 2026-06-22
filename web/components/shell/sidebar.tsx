@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   UsersRound, IndianRupee, BellRing, Phone, LineChart, Settings2, Link2,
-  ChevronUp, MessageSquare, CalendarClock, TrendingUp, ShieldCheck,
+  ChevronUp, MessageSquare, CalendarClock, TrendingUp, ShieldCheck, CalendarCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +34,7 @@ const NAV: NavItem[] = [
   { href: '/follow-ups', label: 'Follow-ups',   icon: CalendarClock, permKey: 'follow-ups' },
   { href: '/reminders',  label: 'Reminders',    icon: BellRing,      permKey: 'reminders' },
   { href: '/calls',      label: 'Call Queue',   icon: Phone,         permKey: 'calls',       badgeKey: 'calls', tone: 'muted' },
+  { href: '/follow-up-30d', label: '30 Day Follow-up', icon: CalendarCheck, permKey: 'follow-up-30d' },
   { href: '/comments',   label: 'Comments',     icon: MessageSquare, permKey: 'comments' },
   { href: '/reports',    label: 'Reports',      icon: LineChart,     permKey: 'reports' },
 ];

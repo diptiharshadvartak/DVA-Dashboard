@@ -3,7 +3,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 
 export type Permission =
   | 'students' | 'emi' | 'progress' | 'follow-ups'
-  | 'reminders' | 'calls' | 'comments' | 'reports'
+  | 'reminders' | 'calls' | 'follow-up-30d' | 'comments' | 'reports'
   // Feature permissions (not nav pages): the AI tools (briefing, progress
   // summary, chat-screenshot extract), the send-message/reminder action, the
   // ability to delete students (single or bulk), the ability to edit a
