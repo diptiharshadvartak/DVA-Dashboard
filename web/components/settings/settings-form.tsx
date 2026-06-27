@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/components/shell/toast-region';
 
-type Provider = 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter';
+type Provider = 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter' | 'vertex';
 
 type Status = {
   location_id: string | null;
@@ -28,6 +28,7 @@ const PROVIDERS: Array<{ value: Provider; label: string; model: string; placehol
   { value: 'google',     label: 'Google Gemini',    model: 'Gemini 1.5 Flash',      placeholder: 'AIza...',    helpUrl: 'https://aistudio.google.com/app/apikey',            supportsVoice: false },
   { value: 'groq',       label: 'Groq',             model: 'Llama 3.1 70B (fast)',  placeholder: 'gsk_...',    helpUrl: 'https://console.groq.com/keys',                     supportsVoice: true  },
   { value: 'openrouter', label: 'OpenRouter',       model: 'auto-routed',           placeholder: 'sk-or-...',  helpUrl: 'https://openrouter.ai/settings/keys',               supportsVoice: false },
+  { value: 'vertex',     label: 'Google Vertex AI', model: 'Gemini 2.5 Flash',      placeholder: '{ "type": "service_account", ... }', helpUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts', supportsVoice: false },
 ];
 
 export function SettingsForm({
@@ -126,17 +127,28 @@ export function SettingsForm({
           </div>
           <div className="text-[11px] text-ink-500 mt-1.5">🎤 = also handles voice transcription</div>
         </div>
-        <SecretField
-          label={`${selectedProvider.label} API Key`}
-          configured={status.ai_configured && status.ai_provider === aiProvider}
-          last4={status.ai_last4}
-          value={form.ai_api_key}
-          shown={!!show.ai}
-          onToggle={() => setShow((s) => ({ ...s, ai: !s.ai }))}
-          onChange={(v) => setForm((f) => ({ ...f, ai_api_key: v }))}
-          placeholder={selectedProvider.placeholder}
-          helpUrl={selectedProvider.helpUrl}
-        />
+        {aiProvider === 'vertex' ? (
+          <JsonField
+            label="Vertex service-account JSON"
+            configured={status.ai_configured && status.ai_provider === aiProvider}
+            value={form.ai_api_key}
+            onChange={(v) => setForm((f) => ({ ...f, ai_api_key: v }))}
+            placeholder={selectedProvider.placeholder}
+            helpUrl={selectedProvider.helpUrl}
+          />
+        ) : (
+          <SecretField
+            label={`${selectedProvider.label} API Key`}
+            configured={status.ai_configured && status.ai_provider === aiProvider}
+            last4={status.ai_last4}
+            value={form.ai_api_key}
+            shown={!!show.ai}
+            onToggle={() => setShow((s) => ({ ...s, ai: !s.ai }))}
+            onChange={(v) => setForm((f) => ({ ...f, ai_api_key: v }))}
+            placeholder={selectedProvider.placeholder}
+            helpUrl={selectedProvider.helpUrl}
+          />
+        )}
         {aiProvider !== status.ai_provider && (
           <div className="flex items-start gap-2 mt-3 text-[12px] text-amber-800 bg-amber-50 rounded-lg p-2.5">
             <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-amber-600" />
@@ -410,6 +422,53 @@ function SecretField({
         >
           {shown ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
         </button>
+      </div>
+    </label>
+  );
+}
+
+// Multi-line variant for credentials that are whole files (e.g. a Google
+// service-account JSON) rather than a single-line key.
+function JsonField({
+  label, configured, value, onChange, placeholder, helpUrl,
+}: {
+  label: string;
+  configured: boolean;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  helpUrl?: string;
+}) {
+  return (
+    <label className="block">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[12px] font-medium text-ink-700">{label}</span>
+        <div className="flex items-center gap-2">
+          {helpUrl && (
+            <a href={helpUrl} target="_blank" rel="noopener" className="text-[11px] text-ink-500 hover:text-accent-700 hover:underline">
+              get JSON ↗
+            </a>
+          )}
+          {configured ? (
+            <span className="text-[11px] text-emerald-700 inline-flex items-center gap-1">
+              <Check className="w-3 h-3" /> Configured
+            </span>
+          ) : (
+            <span className="text-[11px] text-amber-700">Not configured</span>
+          )}
+        </div>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={configured ? 'Already configured — paste a new JSON to replace it' : placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        rows={6}
+        className="w-full px-3 py-2 rounded-lg border border-ink-200 text-[12px] font-mono leading-relaxed resize-y focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-100 bg-white"
+      />
+      <div className="text-[11px] text-ink-500 mt-1">
+        Paste the entire service-account JSON file you downloaded from Google Cloud.
       </div>
     </label>
   );

@@ -17,7 +17,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const stored = (typeof window !== 'undefined' && localStorage.getItem('dva-theme')) as Theme | null;
-    const initial: Theme = stored ?? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    // Default to light (white). OS dark-mode no longer auto-selects dark; only an
+    // explicit user toggle (saved in localStorage) switches to dark.
+    const initial: Theme = stored ?? 'light';
     setTheme(initial);
     document.documentElement.classList.toggle('dark', initial === 'dark');
   }, []);

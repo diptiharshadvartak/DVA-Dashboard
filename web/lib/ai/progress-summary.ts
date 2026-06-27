@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getRuntimeSettings } from '@/lib/settings';
+import { callVertex } from '@/lib/ai/vertex';
 
 export const PROGRESS_SYSTEM_PROMPT = `You are a coaching ops assistant analyzing a student's trajectory in a paid coaching program. Your output is a brief, opinionated summary for the next coach who will work with this student.
 
@@ -40,7 +41,7 @@ type Emi = {
   status: string; paid_date: string | null;
 };
 
-type Provider = 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter';
+type Provider = 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter' | 'vertex';
 
 // Current production models (May 2026):
 //   - Groq: llama-3.3-70b-versatile (3.1 was decommissioned)
@@ -51,6 +52,7 @@ const PROVIDER_CFG: Record<Provider, { endpoint: string; model: string; label: s
   google:     { endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',    model: 'gemini-2.5-flash',          label: 'Gemini 2.5 Flash' },
   groq:       { endpoint: 'https://api.groq.com/openai/v1/chat/completions',            model: 'llama-3.3-70b-versatile',   label: 'Groq Llama 3.3 70B' },
   openrouter: { endpoint: 'https://openrouter.ai/api/v1/chat/completions',              model: 'openai/gpt-4o-mini',        label: 'OpenRouter (GPT-4o-mini)' },
+  vertex:     { endpoint: '',                                                            model: 'gemini-2.5-flash',          label: 'Vertex AI (Gemini 2.5 Flash)' },
 };
 
 function buildContext(student: Student, calls: Call[], emi: Emi[]): string {
@@ -203,6 +205,9 @@ export async function generateProgressSummary(input: {
         break;
       case 'google':
         result = await callGoogle(effectiveKey, cfg.model, PROGRESS_SYSTEM_PROMPT, context);
+        break;
+      case 'vertex':
+        result = await callVertex(effectiveKey, cfg.model, PROGRESS_SYSTEM_PROMPT, context);
         break;
       case 'openrouter':
         result = await callOpenAICompatible(cfg.endpoint, cfg.model, effectiveKey, PROGRESS_SYSTEM_PROMPT, context, {

@@ -7,7 +7,7 @@ let cache: {
   openai?: string;
   anthropic?: string;
   locationId?: string;
-  aiProvider?: 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter';
+  aiProvider?: 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter' | 'vertex';
   aiApiKey?: string;
   at: number;
 } | null = null;

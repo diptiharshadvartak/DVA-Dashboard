@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
 
-const VALID_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'groq', 'openrouter']);
+const VALID_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'groq', 'openrouter', 'vertex']);
 const VALID_CF_ENVS = new Set(['sandbox', 'production']);
 
 export async function POST(req: Request) {
