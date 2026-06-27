@@ -202,9 +202,9 @@ export function SettingsForm({
                 <span className="text-[11px] text-ink-500">Current: <span className="font-mono text-ink-700">{status.location_id}</span></span>
               )}
             </div>
-            <input type="text" value={form.ghl_location_id}
+            <input type="text" value={form.ghl_location_id} name="ghl_location_id"
               onChange={(e) => setForm((f) => ({ ...f, ghl_location_id: e.target.value }))}
-              placeholder="e.g. abc123XYZ"
+              placeholder="e.g. abc123XYZ" autoComplete="off"
               className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-100 bg-white"
             />
           </label>
