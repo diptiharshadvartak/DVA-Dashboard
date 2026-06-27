@@ -49,6 +49,10 @@ export function SettingsForm({
   const [form, setForm] = useState({
     ghl_location_id: '', ghl_pit_token: '', ai_api_key: '', openai_api_key: '',
   });
+  // Chrome ignores autoComplete="off" and autofills the saved login email into
+  // the Location ID box. Loading the field read-only blocks that; it becomes
+  // editable the moment the user focuses it, so editing/saving is unchanged.
+  const [ghlLocReadOnly, setGhlLocReadOnly] = useState(true);
 
   // Cashfree integration state
   const initialCashfreeEnv: 'sandbox' | 'production' = status.cashfree_env ?? 'sandbox';
@@ -205,6 +209,7 @@ export function SettingsForm({
             <input type="text" value={form.ghl_location_id} name="ghl_location_id"
               onChange={(e) => setForm((f) => ({ ...f, ghl_location_id: e.target.value }))}
               placeholder="e.g. abc123XYZ" autoComplete="off"
+              readOnly={ghlLocReadOnly} onFocus={() => setGhlLocReadOnly(false)}
               className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-100 bg-white"
             />
           </label>
