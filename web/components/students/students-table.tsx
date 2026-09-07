@@ -215,12 +215,12 @@ export function StudentsTable({
   function selectAllFiltered() {
     setSelected(new Set(filtered.map((s) => s.id)));
   }
-  // Sent in chunks rather than one request. Archiving snapshots every call log,
+  // Sent in chunks rather than one request. Deleting clears every call log,
   // installment, checkpoint and reminder per student, so a whole-roster delete
   // in a single call would run past the serverless function timeout and fail
   // opaquely. Chunks keep each request short and let a failure report exactly
-  // how far it got. Re-running is safe: archive_students skips ids that are
-  // already archived, so the retry picks up where it stopped.
+  // how far it got. Re-running is safe: delete_students skips ids that are
+  // already gone, so the retry picks up where it stopped.
   const DELETE_CHUNK = 25;
   async function bulkDelete() {
     const ids = Array.from(selected);

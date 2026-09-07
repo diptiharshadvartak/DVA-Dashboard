@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { restoreArchivedStudents } from '@/lib/students/restore';
 
 export const runtime = 'nodejs';
 // 300s (matches the GHL import-by-tag route). The client sends rows in chunks
@@ -71,25 +70,9 @@ export async function POST(req: Request) {
         .select('id, background')
         .eq('email', row.email)
         .maybeSingle();
-      let existing: any = found.data;
-
-      // No live student — they may have been deleted, which moves them into
-      // students_archive. Restore them so this re-upload updates the original
-      // student (EMIs, calls, progress and all) instead of creating an empty
-      // duplicate. Re-read by id rather than email: the archived address can
-      // differ in case from the sheet's, and .eq('email', …) is case-sensitive.
-      if (!existing) {
-        const restored = await restoreArchivedStudents(admin, [row.email], user.id);
-        const restoredId = restored.get(row.email.toLowerCase());
-        if (restoredId) {
-          const { data: back } = await admin
-            .from('students')
-            .select('id, background')
-            .eq('id', restoredId)
-            .maybeSingle();
-          existing = back;
-        }
-      }
+      // A deleted student is gone for good (0011_hard_delete_students.sql),
+      // so a miss here is a genuinely new person: fall through and create them.
+      const existing: any = found.data;
 
       // Build the data payload (EMI / payment fields intentionally NOT included)
       const data: any = {

@@ -88,11 +88,11 @@ export function StudentSlideover({ canDelete = false, canEdit = false }: { canDe
     setStudent((cur) => (cur ? { ...cur, ...patch } : cur));
   }
 
-  // Archive: the student and every row belonging to them (EMIs, calls,
-  // checkpoints, briefings, reminders) are snapshotted into students_archive and
-  // removed from the live tables, so nothing is left behind to leak into a list
-  // that forgot a filter. Re-uploading their sheet restores the snapshot with
-  // the original id. See supabase/migrations/0010_students_archive.sql.
+  // Permanent: the student and every row belonging to them (EMIs, calls,
+  // checkpoints, briefings, reminders, payment events, audit entries) are
+  // erased. There is no undo and no archive to restore from — re-uploading
+  // their sheet creates a brand-new student with no history.
+  // See supabase/migrations/0011_hard_delete_students.sql.
   async function deleteStudent() {
     if (!student) return;
     setDeleting(true);

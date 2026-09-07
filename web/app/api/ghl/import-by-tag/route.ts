@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ghlSearchContactsByTag } from '@/lib/ghl/client';
-import { restoreArchivedStudents } from '@/lib/students/restore';
 
 // This is a bulk job that paginates the whole GHL account. Run it on the Node
 // runtime and allow it the full request budget so a large account doesn't get
@@ -157,13 +156,8 @@ export async function POST(req: Request) {
 
           const emails = Array.from(byEmail.keys());
           if (emails.length) {
-            // Deleted students are moved out of `students` and into
-            // students_archive, so the lookup below cannot see them and this
-            // sync would create an empty duplicate. Pulling a contact from GHL
-            // should bring the person back complete — restore the whole page's
-            // archived students in one call first. No-op for emails that aren't
-            // archived, and it never overwrites a live student.
-            await restoreArchivedStudents(admin, emails, user.id);
+            // A deleted student is erased, not parked, so anyone missing from
+            // this lookup is treated as new and created fresh.
 
             // One lookup for every existing student on this page (was one per contact).
             const { data: existingRows } = await admin
