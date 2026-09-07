@@ -17,6 +17,9 @@ export default async function CommentsPage() {
       student:students!inner(id, first_name, last_name, email),
       coach:profiles(id, display_name, initials)
     `)
+    // Belt-and-braces: a deleted student's call logs are removed with them now,
+    // but this also hides anything left from the old deleted_at soft delete.
+    .is('student.deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(500);
  
