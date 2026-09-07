@@ -258,17 +258,26 @@ export async function POST(req: Request) {
               dated: !!pay.date,
             });
           });
-          // Fill any blank dates by continuing the monthly cadence from the last
-          // dated payment (falling back to today only if the sheet gave us no
-          // date at all), so due_date — which is NOT NULL — always has a value.
+          // Fill any blank dates by continuing the monthly cadence, so due_date
+          // — which is NOT NULL — always has a value. The anchor must come from
+          // the SHEET, never from the upload date: scheduling the remaining
+          // instalments from "today" was the reported bug, and it silently moved
+          // every outstanding due date onto whatever day the file happened to be
+          // uploaded. Preference order is the last dated payment (the real EMI
+          // cycle day), then the down payment, then the course start.
+          const sheetAnchor = row.downpayment_date || row.full_payment_date || row.course_start_date || null;
           let lastKnown = '';
           let gap = 0;
           for (const p of payments) {
             if (p.dated) { lastKnown = p.date; gap = 0; continue; }
             gap += 1;
-            // With no dated payment to anchor on, spread from today rather than
-            // stacking every undated instalment on the same due_date.
-            p.date = lastKnown ? addMonths(lastKnown, gap) : addMonths(fallbackDate, gap - 1);
+            p.date = lastKnown
+              ? addMonths(lastKnown, gap)
+              : sheetAnchor
+                ? addMonths(sheetAnchor, gap)
+                // Nothing in the sheet to anchor on: spread from today rather
+                // than stacking every undated instalment on one due_date.
+                : addMonths(fallbackDate, gap - 1);
           }
         }
 
