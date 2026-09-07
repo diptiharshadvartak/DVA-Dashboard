@@ -234,23 +234,42 @@ export async function POST(req: Request) {
         // record (students.down_payment) and the Payments/Profile views add it
         // on top of the EMI total — recording it here as well would
         // double-count it.
+        // `dated` records whether the sheet actually supplied a date for this
+        // payment. An amount with a BLANK date must never be assumed paid: the
+        // coach filled in the instalment but not when it was collected, so we
+        // date it from the monthly cadence below and let its status fall out of
+        // that date instead of silently booking it as received today.
         const isFullPayment = !!(row.full_payment_amount && row.full_payment_amount > 0);
-        const payments: { amount: number; date: string; mode: string }[] = [];
+        const payments: { amount: number; date: string; mode: string; dated: boolean }[] = [];
         if (isFullPayment) {
           payments.push({
             amount: row.full_payment_amount as number,
             date: row.full_payment_date || fallbackDate,
             mode: row.payment_mode || 'Full Payment',
+            dated: !!row.full_payment_date,
           });
         } else {
           (row.payment_history || []).forEach((pay, i) => {
             if (!(pay.amount > 0)) return;
             payments.push({
               amount: pay.amount,
-              date: pay.date || fallbackDate,
+              date: pay.date || '',
               mode: modeAt(row, i),
+              dated: !!pay.date,
             });
           });
+          // Fill any blank dates by continuing the monthly cadence from the last
+          // dated payment (falling back to today only if the sheet gave us no
+          // date at all), so due_date — which is NOT NULL — always has a value.
+          let lastKnown = '';
+          let gap = 0;
+          for (const p of payments) {
+            if (p.dated) { lastKnown = p.date; gap = 0; continue; }
+            gap += 1;
+            // With no dated payment to anchor on, spread from today rather than
+            // stacking every undated instalment on the same due_date.
+            p.date = lastKnown ? addMonths(lastKnown, gap) : addMonths(fallbackDate, gap - 1);
+          }
         }
 
         // If down payment + recorded payments fall short of the total fee, the
@@ -283,17 +302,28 @@ export async function POST(req: Request) {
         // has to be set on every row — omitting it made the whole insert fail
         // silently, dropping every payment.
         const totalCount = payments.length + upcoming.length;
-        const explicitRows: any[] = payments.map((p, idx) => ({
-          student_id: studentId,
-          installment_no: idx + 1,
-          installments_total: totalCount,
-          amount: p.amount,
-          due_date: p.date,
-          reminder_date: p.date,
-          status: 'paid',
-          paid_date: p.date,
-          payment_mode: p.mode,
-        }));
+        // A "Payment N" column lists an instalment, NOT proof it was collected.
+        // Only a payment whose date has actually arrived counts as paid — the
+        // sheets carry the whole schedule, so booking future instalments as
+        // received inflated collections by the entire remaining balance. A
+        // payment whose date the sheet left blank is never paid (see `dated`).
+        const explicitRows: any[] = payments.map((p, idx) => {
+          const isPaid = p.dated && p.date <= today;
+          const status = isPaid
+            ? 'paid'
+            : p.date < today ? 'overdue' : p.date === today ? 'due_soon' : 'upcoming';
+          return {
+            student_id: studentId,
+            installment_no: idx + 1,
+            installments_total: totalCount,
+            amount: p.amount,
+            due_date: p.date,
+            reminder_date: isPaid ? p.date : subDays(p.date, 2),
+            status,
+            paid_date: isPaid ? p.date : null,
+            payment_mode: isPaid ? p.mode : null,
+          };
+        });
         upcoming.forEach((u, idx) => {
           const status = u.date < today ? 'overdue' : u.date === today ? 'due_soon' : 'upcoming';
           explicitRows.push({
@@ -463,8 +493,12 @@ function modeAmount(amounts: number[]): number {
 
 function addMonths(dateStr: string, months: number): string {
   const [y, m, d] = dateStr.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  date.setUTCMonth(date.getUTCMonth() + months);
+  // Clamp to the last day of the target month. setUTCMonth alone OVERFLOWS:
+  // 31 Jan + 1 month became 3 Mar, skipping February entirely, so a student on
+  // a 29th/30th/31st cycle silently lost an instalment into the wrong month.
+  // 31 Jan + 1 is 28 Feb (29th in a leap year); 31 Mar + 1 is 30 Apr.
+  const lastDayOfTarget = new Date(Date.UTC(y, m + months, 0)).getUTCDate();
+  const date = new Date(Date.UTC(y, m - 1 + months, Math.min(d, lastDayOfTarget)));
   return date.toISOString().slice(0, 10);
 }
 
