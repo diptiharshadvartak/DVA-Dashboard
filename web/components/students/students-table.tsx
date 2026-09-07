@@ -43,6 +43,9 @@ export function StudentsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  // How many are through so far, so a large delete shows progress instead of
+  // sitting on a spinner for a minute.
+  const [bulkDone, setBulkDone] = useState(0);
   // The active status filter comes from the URL (?filter=). KPI cards now switch
   // it via history.pushState (no server navigation), so reading it from
   // useSearchParams makes the list react instantly without a full page refetch.
@@ -172,6 +175,27 @@ export function StudentsTable({
     : GRID_COLS;
   const pageIds = pageRows.map((s) => s.id);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  // The header checkbox only ever covers the 10 rows on screen. "Select all"
+  // spans every row the current filters match, across all pages — without it a
+  // roster of 200 takes 20 pages of clicking to clear.
+  const allFilteredSelected = filtered.length > 0 && filtered.every((s) => selected.has(s.id));
+  const moreBeyondPage = filtered.length > pageIds.length;
+  // Derived from the row counts rather than by enumerating every filter's state,
+  // so adding a filter later can't leave this stale. Drives the "matching" vs
+  // "students" wording — before a bulk delete it has to be obvious whether the
+  // selection is the whole roster or just what the filters narrowed it to.
+  const anyFilterActive = filtered.length < students.length;
+
+  // Tri-state: some-but-not-all of this page ticked shows a dash, not an empty
+  // box, so a partial selection isn't mistaken for none. `indeterminate` is a
+  // DOM property with no HTML attribute, so it has to be set imperatively.
+  const headerBoxRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (headerBoxRef.current) {
+      headerBoxRef.current.indeterminate =
+        !allPageSelected && pageIds.some((id) => selected.has(id));
+    }
+  }, [allPageSelected, pageIds, selected]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -188,27 +212,50 @@ export function StudentsTable({
       return n;
     });
   }
+  function selectAllFiltered() {
+    setSelected(new Set(filtered.map((s) => s.id)));
+  }
+  // Sent in chunks rather than one request. Archiving snapshots every call log,
+  // installment, checkpoint and reminder per student, so a whole-roster delete
+  // in a single call would run past the serverless function timeout and fail
+  // opaquely. Chunks keep each request short and let a failure report exactly
+  // how far it got. Re-running is safe: archive_students skips ids that are
+  // already archived, so the retry picks up where it stopped.
+  const DELETE_CHUNK = 25;
   async function bulkDelete() {
     const ids = Array.from(selected);
     if (!ids.length) return;
     setBulkBusy(true);
+    let done = 0;
     try {
-      const res = await fetch('/api/students/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json().catch(() => ({}));
-      const n = data.count ?? ids.length;
-      toast(`${n} student${n === 1 ? '' : 's'} deleted.`, 'success');
+      for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+        const chunk = ids.slice(i, i + DELETE_CHUNK);
+        const res = await fetch('/api/students/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: chunk }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json().catch(() => ({}));
+        done += Number(data.count ?? chunk.length);
+        setBulkDone(done);
+      }
+      toast(`${done} student${done === 1 ? '' : 's'} deleted.`, 'success');
       setSelected(new Set());
       setConfirmBulk(false);
       router.refresh();
     } catch (e: any) {
-      toast(e?.message ?? 'Failed to delete', 'error');
+      const msg = e?.message ?? 'Failed to delete';
+      toast(done > 0 ? `Deleted ${done} of ${ids.length}, then failed: ${msg}` : msg, 'error');
+      // Drop the ones that already went through so a retry doesn't re-send them
+      // and the count in the dialog reflects what's actually left.
+      if (done > 0) {
+        setSelected(new Set(ids.slice(done)));
+        router.refresh();
+      }
     } finally {
       setBulkBusy(false);
+      setBulkDone(0);
     }
   }
 
@@ -310,6 +357,18 @@ export function StudentsTable({
           >
             <Trash2 className="w-3 h-3" /> Delete selected
           </button>
+          {/* Offered once the visible page is fully ticked — the point at which
+              someone is plainly trying to select more than one page's worth. */}
+          {moreBeyondPage && !allFilteredSelected && (
+            <button onClick={selectAllFiltered} className="text-rose-700 hover:text-rose-900 text-[12px] font-medium underline underline-offset-2">
+              Select all {filtered.length} {anyFilterActive ? 'matching' : 'students'}
+            </button>
+          )}
+          {allFilteredSelected && moreBeyondPage && (
+            <span className="text-rose-700 text-[12px]">
+              All {filtered.length} {anyFilterActive ? 'matching students' : 'students'} selected
+            </span>
+          )}
           <button onClick={() => setSelected(new Set())} className="ml-auto text-ink-500 hover:text-ink-800 text-[12px]">
             Clear selection ✕
           </button>
@@ -320,6 +379,7 @@ export function StudentsTable({
         {canDelete && (
           <div className="flex items-center">
             <input
+              ref={headerBoxRef}
               type="checkbox"
               checked={allPageSelected}
               onChange={toggleSelectPage}
@@ -488,6 +548,14 @@ export function StudentsTable({
                 <div className="text-[13px] text-ink-600 mt-1.5 leading-snug">
                   They&apos;ll be archived. Their EMIs, calls and progress go with them and stop showing anywhere in the app. Re-uploading their sheet brings all of it back.
                 </div>
+                {/* Selecting all under an active filter deletes only what the
+                    filter matched — worth spelling out, since the roster on
+                    screen looks like the whole roster. */}
+                {allFilteredSelected && anyFilterActive && (
+                  <div className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mt-2.5 leading-snug">
+                    This is every student matching your current filters — {students.length - filtered.length} other{students.length - filtered.length === 1 ? '' : 's'} {students.length - filtered.length === 1 ? 'is' : 'are'} filtered out and will be kept.
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 mt-5">
@@ -497,7 +565,9 @@ export function StudentsTable({
               </button>
               <button onClick={bulkDelete} disabled={bulkBusy}
                 className="h-9 px-5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[13px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
-                {bulkBusy ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</> : `Delete ${selected.size}`}
+                {bulkBusy
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> {selected.size > DELETE_CHUNK ? `Deleting ${bulkDone}/${selected.size}…` : 'Deleting…'}</>
+                  : `Delete ${selected.size}`}
               </button>
             </div>
           </div>

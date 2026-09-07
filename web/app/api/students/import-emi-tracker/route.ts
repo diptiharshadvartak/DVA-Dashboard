@@ -246,7 +246,11 @@ export async function POST(req: Request) {
             amount: row.full_payment_amount as number,
             date: row.full_payment_date || fallbackDate,
             mode: row.payment_mode || 'Full Payment',
-            dated: !!row.full_payment_date,
+            // A "Full Payment" amount asserts the fee was settled, so a missing
+            // date is a data-entry gap rather than evidence it is unpaid —
+            // treat it as collected. Only an EXPLICIT future date holds it back
+            // (the date comparison below still applies).
+            dated: true,
           });
         } else {
           (row.payment_history || []).forEach((pay, i) => {
@@ -266,18 +270,28 @@ export async function POST(req: Request) {
           // uploaded. Preference order is the last dated payment (the real EMI
           // cycle day), then the down payment, then the course start.
           const sheetAnchor = row.downpayment_date || row.full_payment_date || row.course_start_date || null;
+          // Forward pass: carry the cadence on from the previous dated payment.
           let lastKnown = '';
           let gap = 0;
           for (const p of payments) {
             if (p.dated) { lastKnown = p.date; gap = 0; continue; }
             gap += 1;
-            p.date = lastKnown
-              ? addMonths(lastKnown, gap)
-              : sheetAnchor
-                ? addMonths(sheetAnchor, gap)
-                // Nothing in the sheet to anchor on: spread from today rather
-                // than stacking every undated instalment on one due_date.
-                : addMonths(fallbackDate, gap - 1);
+            if (lastKnown) p.date = addMonths(lastKnown, gap);
+          }
+          const firstDated = payments.findIndex((p) => p.dated);
+          if (firstDated > 0) {
+            // Blanks BEFORE the first dated payment have nothing behind them.
+            // Step backwards from that payment instead, so instalment 1 can
+            // never be scheduled after instalment 2.
+            for (let i = firstDated - 1; i >= 0; i--) {
+              payments[i].date = addMonths(payments[firstDated].date, i - firstDated);
+            }
+          } else if (firstDated === -1) {
+            // Nothing dated anywhere: anchor on the sheet, and only fall back
+            // to today when the sheet carries no date at all.
+            payments.forEach((p, i) => {
+              p.date = sheetAnchor ? addMonths(sheetAnchor, i + 1) : addMonths(fallbackDate, i);
+            });
           }
         }
 
