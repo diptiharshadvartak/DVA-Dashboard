@@ -118,7 +118,15 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
         );
         sheet['!ref'] = XLSX.utils.encode_range(r);
       }
-      const json: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+      // raw:true keeps native cell types. With cellDates:true above, date cells
+      // arrive as real Date objects instead of their FORMATTED TEXT — critical,
+      // because Excel's default m/d/yy formatting rendered "2 May 2026" as
+      // "5/2/26", which parseDate's day-first tie-break then read back as
+      // 5 February. Every helper below normalizes via toString()/parseX(), so
+      // numbers and booleans coming through natively are handled identically —
+      // and a Mobile Number cell displayed as "9.1825E+11" now arrives as the
+      // real 918250000000 instead of being truncated to 7 digits.
+      const json: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
 
       if (json.length === 0) {
         setErrors(['File is empty']);
@@ -642,7 +650,17 @@ function parsePaymentHistory(row: any): { amount: number; date: string | null; m
 
 function parseAmount(v: any): number {
   if (v == null) return 0;
-  const s = v.toString().replace(/[,\s]/g, '').trim();
+  // A native number (raw:true) needs no string round-trip — and skipping it
+  // avoids toString() producing exponent notation for very large values.
+  if (typeof v === 'number') return isFinite(v) ? Math.round(v) : 0;
+  // Strip currency noise before parsing. Without this a coach typing "₹25,000"
+  // or "Rs 25000" scored 0, silently wiping the amount: parseFloat stops at the
+  // first non-numeric character, so a leading symbol yielded NaN. Placeholders
+  // like "NA" and "-" still parse to 0, as before.
+  const s = v.toString()
+    .replace(/[,\s]/g, '')
+    .replace(/^(?:₹|rs\.?|inr|\$)/i, '')
+    .replace(/\/-$/, '');
   const n = parseFloat(s);
   return isNaN(n) ? 0 : Math.round(n);
 }
