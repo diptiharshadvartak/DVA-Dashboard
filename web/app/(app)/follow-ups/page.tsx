@@ -15,8 +15,13 @@ export default async function FollowUpsPage() {
     .select(`
       id, student_id, comment, outcome, next_action, next_action_due, created_at,
       coach:profiles(display_name, initials),
-      student:students(first_name, last_name, email, mobile)
+      student:students!inner(first_name, last_name, email, mobile)
     `)
+    // !inner + this filter drops follow-ups whose student is gone. Safe as an
+    // inner join because call_logs.student_id is NOT NULL. Belt-and-braces: a
+    // deleted student's call logs go with them now, but this also hides
+    // anything left from the old deleted_at soft delete.
+    .is('student.deleted_at', null)
     .not('next_action', 'is', null)
     .not('next_action_due', 'is', null)
     .order('next_action_due', { ascending: true });

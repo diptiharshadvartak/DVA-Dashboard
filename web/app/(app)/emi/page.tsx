@@ -59,6 +59,11 @@ export default async function EmiPage({ searchParams }: { searchParams: { tab?: 
   const all: any[] = await selectAllRows((from, to) =>
     sb.from('emi_schedule')
       .select('*, students!inner(id, first_name, last_name, email, mobile, ghl_contact_id)')
+      // Deleting a student now removes their installments outright (they move
+      // into students_archive), so this filter is belt-and-braces — it also
+      // hides any row left over from the old deleted_at soft delete, which is
+      // how a deleted student's EMIs used to keep showing up here.
+      .is('students.deleted_at', null)
       .order('due_date').order('id').range(from, to),
   );
   // "Due this week" = flagged due_soon, OR an unpaid installment whose due date

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { restoreArchivedStudents } from '@/lib/students/restore';
 import { istDateString } from '@/lib/utils';
 
 export const runtime = 'nodejs';
@@ -116,11 +117,30 @@ export async function POST(req: Request) {
    for (const row of groupRows) {
     try {
       // Find or create student
-      const { data: existing } = await admin
+      const found = await admin
         .from('students')
         .select('id, tags')
         .eq('email', row.email)
         .maybeSingle();
+      let existing: any = found.data;
+
+      // No live student — they may have been deleted, which moves them into
+      // students_archive. Restore them so this re-upload updates the original
+      // student (EMIs, calls, progress and all) instead of creating an empty
+      // duplicate. Re-read by id rather than email: the archived address can
+      // differ in case from the sheet's, and .eq('email', …) is case-sensitive.
+      if (!existing) {
+        const restored = await restoreArchivedStudents(admin, [row.email], user.id);
+        const restoredId = restored.get(row.email.toLowerCase());
+        if (restoredId) {
+          const { data: back } = await admin
+            .from('students')
+            .select('id, tags')
+            .eq('id', restoredId)
+            .maybeSingle();
+          existing = back;
+        }
+      }
 
       let studentId: string;
       if (existing) {

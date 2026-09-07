@@ -88,9 +88,11 @@ export function StudentSlideover({ canDelete = false, canEdit = false }: { canDe
     setStudent((cur) => (cur ? { ...cur, ...patch } : cur));
   }
 
-  // Soft-delete: set deleted_at so the student drops out of every list (which
-  // all filter `deleted_at IS NULL`) while their payment history and records are
-  // preserved and can be restored by clearing the column. Avoids any cascade.
+  // Archive: the student and every row belonging to them (EMIs, calls,
+  // checkpoints, briefings, reminders) are snapshotted into students_archive and
+  // removed from the live tables, so nothing is left behind to leak into a list
+  // that forgot a filter. Re-uploading their sheet restores the snapshot with
+  // the original id. See supabase/migrations/0010_students_archive.sql.
   async function deleteStudent() {
     if (!student) return;
     setDeleting(true);
@@ -231,7 +233,7 @@ export function StudentSlideover({ canDelete = false, canEdit = false }: { canDe
               <div className="flex-1 pt-1">
                 <div className="text-[16px] font-semibold text-ink-900 leading-tight">Delete student?</div>
                 <div className="text-[13px] text-ink-600 mt-1.5 leading-snug">
-                  {student.first_name} {student.last_name} will be removed from the list. Their payment history and records are kept and can be restored later.
+                  {student.first_name} {student.last_name} will be archived. Their EMIs, calls and progress go with them and stop showing anywhere in the app. Re-uploading their sheet brings all of it back.
                 </div>
               </div>
             </div>

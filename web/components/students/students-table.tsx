@@ -486,7 +486,7 @@ export function StudentsTable({
                   Delete {selected.size} student{selected.size === 1 ? '' : 's'}?
                 </div>
                 <div className="text-[13px] text-ink-600 mt-1.5 leading-snug">
-                  They&apos;ll be removed from the list. Payment history and records are kept and can be restored later.
+                  They&apos;ll be archived. Their EMIs, calls and progress go with them and stop showing anywhere in the app. Re-uploading their sheet brings all of it back.
                 </div>
               </div>
             </div>
