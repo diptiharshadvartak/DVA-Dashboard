@@ -18,7 +18,8 @@ do $$
 declare
   v_s    uuid := gen_random_uuid();
   v_e1   uuid; v_e2 uuid;
-  v_cf   bigint;
+  v_cf   text;   -- text, not bigint: cashfree_events.id is bigserial in
+                 -- 0007_cashfree.sql but uuid on the live database.
   n      int;
   v_txt  text;
   v_tags text[];
@@ -52,7 +53,7 @@ begin
   values ('emi_due', null, v_e2, 'sms', 'queued');
 
   insert into public.cashfree_events (emi_id, student_id, event_type, cashfree_link_id)
-  values (v_e1, v_s, 'link_created', 'LINK-1') returning id into v_cf;
+  values (v_e1, v_s, 'link_created', 'LINK-1') returning id::text into v_cf;
 
   -- ---------------- archive ----------------
   perform public.archive_student(v_s, '11111111-1111-1111-1111-111111111111');
@@ -71,7 +72,7 @@ begin
   select count(*) into n from public.reminders where student_id = v_s or emi_id in (v_e1, v_e2);
   if n <> 0 then raise exception 'T1: % reminders survived', n; end if;
   -- cashfree_events must SURVIVE, unlinked
-  select count(*) into n from public.cashfree_events where id = v_cf and student_id is null;
+  select count(*) into n from public.cashfree_events where id::text = v_cf and student_id is null;
   if n <> 1 then raise exception 'T1: cashfree event was deleted instead of unlinked'; end if;
   select count(*) into n from public.students_archive where id = v_s;
   if n <> 1 then raise exception 'T1: expected 1 archive row, got %', n; end if;
@@ -114,7 +115,7 @@ begin
     raise exception 'T1: the student_id-less reminder was not restored faithfully';
   end if;
 
-  select count(*) into n from public.cashfree_events where id = v_cf and student_id = v_s;
+  select count(*) into n from public.cashfree_events where id::text = v_cf and student_id = v_s;
   if n <> 1 then raise exception 'T1: cashfree event was not re-linked'; end if;
 
   if exists (select 1 from public.students_archive where id = v_s) then

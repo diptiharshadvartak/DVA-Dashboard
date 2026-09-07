@@ -287,9 +287,13 @@ begin
     end loop;
 
     -- cashfree_events were never deleted, only unlinked.
+    -- Compared as text on purpose: cashfree_events.id is bigserial in
+    -- 0007_cashfree.sql but uuid on the live database, and casting to either
+    -- one fails to plan on the other ("operator does not exist: uuid =
+    -- bigint"). Text works for both and the id set here is tiny.
     update public.cashfree_events c
        set student_id = a.id
-     where c.id in (select (x)::bigint from jsonb_array_elements_text(a.snapshot->'cashfree_event_ids') x);
+     where c.id::text in (select x from jsonb_array_elements_text(a.snapshot->'cashfree_event_ids') x);
 
     delete from public.students_archive where public.students_archive.id = a.id;
 
