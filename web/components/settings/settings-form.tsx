@@ -308,21 +308,22 @@ export function SettingsForm({
           </div>
 
           <div>
-            <label className="text-[12px] font-medium text-ink-700 mb-1 block">Webhook Secret (optional)</label>
+            <label className="text-[12px] font-medium text-ink-700 mb-1 block">Webhook Secret (needed for auto mark-paid)</label>
             <input
               type="password"
               value={cashfreeWebhookSecret}
               onChange={(e) => setCashfreeWebhookSecret(e.target.value)}
-              placeholder="From Cashfree → Developers → Webhooks → Add Webhook"
+              placeholder="Paste the same Secret Key as above (cfsk_ma_…)"
               disabled={!isAdmin}
               className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] bg-white font-mono"
             />
             <div className="text-[11px] text-ink-500 mt-1 leading-relaxed">
-              <strong>Setup webhook in Cashfree:</strong><br/>
+              Cashfree signs webhooks with your Secret Key, so paste that same key here. Without it, payments are not marked paid automatically.<br/>
+              <strong>Setup webhook in Cashfree</strong> (same mode as Environment above, Test or Live):<br/>
               1. Dashboard → Developers → Webhooks → Add Webhook<br/>
-              2. Paste this URL: <code className="bg-ink-100 px-1.5 py-0.5 rounded text-[10.5px]">https://[your-domain]/api/cashfree/webhook</code><br/>
-              3. Select events: <em>Payment Success</em>, <em>Payment Failed</em><br/>
-              4. Copy the generated secret here → save
+              2. Paste this URL: <code className="bg-ink-100 px-1.5 py-0.5 rounded text-[10.5px]">https://dva-dashboard-seven.vercel.app/api/cashfree/webhook</code><br/>
+              3. Select events: <em>Payment Success</em>, <em>Payment Failed</em>, <em>Payment User Dropped</em>, <em>Payment Link Event</em><br/>
+              4. Test (should return 200) → Save
             </div>
           </div>
         </div>
