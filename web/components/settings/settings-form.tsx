@@ -61,7 +61,6 @@ export function SettingsForm({
   const [cashfreeAppId, setCashfreeAppId]                 = useState('');
   const [cashfreeSecret, setCashfreeSecret]               = useState('');
   const [cashfreeEnv, setCashfreeEnv]                     = useState<'sandbox' | 'production'>(initialCashfreeEnv);
-  const [cashfreeWebhookSecret, setCashfreeWebhookSecret] = useState('');
 
   const selectedProvider = PROVIDERS.find((p) => p.value === aiProvider) ?? PROVIDERS[1];
   const savedProviderSupportsVoice =
@@ -83,7 +82,6 @@ export function SettingsForm({
       // Cashfree fields
       if (cashfreeAppId.trim())          payload.cashfree_app_id           = cashfreeAppId.trim();
       if (cashfreeSecret.trim())         payload.cashfree_secret_key       = cashfreeSecret.trim();
-      if (cashfreeWebhookSecret.trim())  payload.cashfree_webhook_secret   = cashfreeWebhookSecret.trim();
       // Only send env if user changed it or is also setting credentials —
       // otherwise unrelated saves would clobber a stored 'production' back to 'sandbox'.
       if (cashfreeEnv !== initialCashfreeEnv || cashfreeAppId.trim() || cashfreeSecret.trim()) {
@@ -100,7 +98,6 @@ export function SettingsForm({
       setForm({ ghl_location_id: '', ghl_pit_token: '', ai_api_key: '', openai_api_key: '' });
       setCashfreeAppId('');
       setCashfreeSecret('');
-      setCashfreeWebhookSecret('');
       setTimeout(() => window.location.reload(), 600);
     } catch (e: any) { toast(e.message ?? 'Save failed', 'error'); }
     finally { setSaving(false); }
@@ -308,18 +305,8 @@ export function SettingsForm({
           </div>
 
           <div>
-            <label className="text-[12px] font-medium text-ink-700 mb-1 block">Webhook Secret (needed for auto mark-paid)</label>
-            <input
-              type="password"
-              value={cashfreeWebhookSecret}
-              onChange={(e) => setCashfreeWebhookSecret(e.target.value)}
-              placeholder="Paste the same Secret Key as above (cfsk_ma_…)"
-              disabled={!isAdmin}
-              className="w-full h-9 px-3 rounded-lg border border-ink-200 text-[13px] bg-white font-mono"
-            />
-            <div className="text-[11px] text-ink-500 mt-1 leading-relaxed">
-              Cashfree signs webhooks with your Secret Key, so paste that same key here. Without it, payments are not marked paid automatically.<br/>
-              <strong>Setup webhook in Cashfree</strong> (same mode as Environment above, Test or Live):<br/>
+            <div className="text-[11px] text-ink-500 leading-relaxed">
+              <strong>Setup webhook in Cashfree</strong> (same mode as Environment above, Test or Live), so payments are marked paid automatically. No extra secret is needed: the Secret Key above is used.<br/>
               1. Dashboard → Developers → Webhooks → Add Webhook<br/>
               2. Paste this URL: <code className="bg-ink-100 px-1.5 py-0.5 rounded text-[10.5px]">https://dva-dashboard-seven.vercel.app/api/cashfree/webhook</code><br/>
               3. Select events: <em>Payment Success</em>, <em>Payment Failed</em>, <em>Payment User Dropped</em>, <em>Payment Link Event</em><br/>

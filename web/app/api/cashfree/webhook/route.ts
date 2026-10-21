@@ -22,18 +22,23 @@ export async function POST(req: Request) {
 
   const admin = supabaseAdmin();
 
-  // Load webhook secret
+  // Cashfree signs webhooks with the API Secret Key, so that is the secret.
+  // A separately stored cashfree_webhook_secret (older setups) is still
+  // accepted as a fallback.
   const { data: settings } = await admin
     .from('ghl_settings')
-    .select('cashfree_webhook_secret')
+    .select('cashfree_secret_key, cashfree_webhook_secret')
     .eq('id', 1)
     .maybeSingle();
 
-  const webhookSecret = (settings as any)?.cashfree_webhook_secret;
+  const secrets = [
+    (settings as any)?.cashfree_secret_key,
+    (settings as any)?.cashfree_webhook_secret,
+  ].filter((s): s is string => !!s);
 
-  if (webhookSecret) {
+  if (secrets.length > 0) {
     // Verify signature
-    const valid = verifyWebhookSignature(webhookSecret, timestamp, rawBody, signature);
+    const valid = secrets.some((s) => verifyWebhookSignature(s, timestamp, rawBody, signature));
     if (!valid) {
       console.error('[cashfree webhook] Invalid signature');
       await admin.from('cashfree_events').insert({
@@ -46,14 +51,14 @@ export async function POST(req: Request) {
   } else {
     // No secret configured → we cannot trust this request. Log it but do NOT
     // process it (previously it fell through and could auto-mark EMIs paid from
-    // an unauthenticated caller). Configure cashfree_webhook_secret to enable.
-    console.warn('[cashfree webhook] No webhook secret configured — ignoring unverified request');
+    // an unauthenticated caller). Save the Cashfree Secret Key in Settings to enable.
+    console.warn('[cashfree webhook] No Cashfree Secret Key saved — ignoring unverified request');
     await admin.from('cashfree_events').insert({
       event_type: 'webhook_unverified',
       payload: { rawBody: rawBody.substring(0, 500) },
-      error: 'No webhook secret configured — set cashfree_webhook_secret to enable auto-mark-paid',
+      error: 'No Cashfree Secret Key saved — save it in Settings to enable auto-mark-paid',
     } as any);
-    return NextResponse.json({ ok: true, note: 'webhook secret not configured; request ignored' });
+    return NextResponse.json({ ok: true, note: 'Cashfree Secret Key not saved; request ignored' });
   }
 
   let parsed: any;
