@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { verifyCredentials } from '@/lib/cashfree/client';
+import { checkCredentials } from '@/lib/cashfree/client';
 
 export const runtime = 'nodejs';
 
@@ -78,10 +78,23 @@ export async function POST(req: Request) {
     const secretKey = patch.cashfree_secret_key ?? current?.cashfree_secret_key;
     const env = (patch.cashfree_env ?? current?.cashfree_env) === 'production' ? 'production' : 'sandbox';
     if (appId && secretKey) {
-      const result = await verifyCredentials({ appId, secretKey, env });
-      if (result === 'rejected') {
+      const check = await checkCredentials({ appId, secretKey, env });
+      if (check.result === 'rejected') {
+        const label = (e: string) => (e === 'production' ? 'Production' : 'Sandbox');
+        const other = env === 'production' ? 'sandbox' : 'production';
+        // Most common mistake: right keys, wrong environment. Say so directly.
+        const otherCheck = await checkCredentials({ appId, secretKey, env: other });
+        if (otherCheck.result === 'ok') {
+          return new NextResponse(
+            `These are ${label(other)} keys. Change Environment to "${label(other)}" and save again. Nothing was saved.`,
+            { status: 400 }
+          );
+        }
+        const usedStored =
+          !patch.cashfree_app_id ? ' (the App ID box was empty, so the previously saved App ID was used)' :
+          !patch.cashfree_secret_key ? ' (the Secret Key box was empty, so the previously saved secret was used)' : '';
         return new NextResponse(
-          `Cashfree rejected these keys for ${env === 'production' ? 'Production' : 'Sandbox'}. Check the App ID and Secret Key, and that the environment matches the keys (test keys = Sandbox, live keys = Production). Nothing was saved.`,
+          `Cashfree rejected these keys in both Sandbox and Production${usedStored}. Cashfree said: "${check.message || `HTTP ${check.status}`}". Re-copy the App ID and Secret Key from the same row in Cashfree → Developers → API Keys. Nothing was saved.`,
           { status: 400 }
         );
       }

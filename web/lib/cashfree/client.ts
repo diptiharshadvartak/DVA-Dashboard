@@ -141,6 +141,13 @@ export async function cancelPaymentLink(
 export async function verifyCredentials(
   cfg: CashfreeConfig
 ): Promise<'ok' | 'rejected' | 'unknown'> {
+  return (await checkCredentials(cfg)).result;
+}
+
+/** Same check as verifyCredentials, plus Cashfree's own status and message. */
+export async function checkCredentials(
+  cfg: CashfreeConfig
+): Promise<{ result: 'ok' | 'rejected' | 'unknown'; status: number; message: string }> {
   try {
     const res = await fetch(`${getBaseUrl(cfg.env)}/links/__dva_credentials_check__`, {
       headers: {
@@ -151,11 +158,19 @@ export async function verifyCredentials(
       cache: 'no-store',
       signal: AbortSignal.timeout(6000),
     });
-    if (res.status === 401 || res.status === 403) return 'rejected';
-    if (res.ok || res.status === 404) return 'ok';
-    return 'unknown';
-  } catch {
-    return 'unknown';
+    const data = await res.json().catch(() => ({}));
+    const message = String((data as any)?.message ?? '');
+    // 401 = keys not accepted. 403 can also mean "keys fine, feature not
+    // enabled / IP not whitelisted", so only treat it as rejected when
+    // Cashfree says it's an authentication error.
+    const isAuthError =
+      res.status === 401 ||
+      (res.status === 403 && /authenticat/i.test(`${message} ${(data as any)?.type ?? ''}`));
+    if (isAuthError) return { result: 'rejected', status: res.status, message };
+    if (res.ok || res.status === 404) return { result: 'ok', status: res.status, message };
+    return { result: 'unknown', status: res.status, message };
+  } catch (e: any) {
+    return { result: 'unknown', status: 0, message: e?.message ?? 'network error' };
   }
 }
 
