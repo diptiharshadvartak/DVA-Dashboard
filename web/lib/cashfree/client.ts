@@ -74,7 +74,7 @@ export async function createPaymentLink(
     body.link_meta = { notify_url: args.notifyUrl };
   }
 
-  const res = await fetch(url, {
+  const post = () => fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -85,9 +85,21 @@ export async function createPaymentLink(
     body: JSON.stringify(body),
   });
 
-  const data = await res.json().catch(() => ({}));
+  let res = await post();
+  let data: any = await res.json().catch(() => ({}));
+
+  // Production Cashfree can refuse link_meta.notify_url ("invalid url
+  // entered") even for a valid https URL. The link was not created, so retry
+  // without it; payment events still arrive via the webhook configured in the
+  // Cashfree dashboard, which the webhook route handles the same way.
+  if (!res.ok && body.link_meta && /notify_url/i.test(String(data?.message ?? ''))) {
+    delete body.link_meta;
+    res = await post();
+    data = await res.json().catch(() => ({}));
+  }
+
   if (!res.ok) {
-    const msg = (data as any)?.message ?? `Cashfree API returned ${res.status}`;
+    const msg = data?.message ?? `Cashfree API returned ${res.status}`;
     throw new CashfreeError(res.status, msg);
   }
 
