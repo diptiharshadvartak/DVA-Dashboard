@@ -20,6 +20,7 @@ type Status = {
   ai_configured: boolean;        ai_last4: string;
   cashfree_configured?: boolean; cashfree_app_id_last4?: string;
   cashfree_env?: 'sandbox' | 'production';
+  cashfree_verified?: 'ok' | 'rejected' | 'unknown' | null;
 };
 
 const PROVIDERS: Array<{ value: Provider; label: string; model: string; placeholder: string; helpUrl: string; supportsVoice: boolean }> = [
@@ -260,12 +261,22 @@ export function SettingsForm({
               </select>
             </div>
             <div className="flex items-end">
-              {status.cashfree_configured && (
+              {status.cashfree_configured && status.cashfree_verified === 'rejected' ? (
+                <div className="flex items-center gap-1.5 text-[12px] text-red-700">
+                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                  Not connected: Cashfree rejected the saved keys (app ID ends with {status.cashfree_app_id_last4 || '••••'})
+                </div>
+              ) : status.cashfree_configured && status.cashfree_verified === 'ok' ? (
                 <div className="flex items-center gap-1.5 text-[12px] text-emerald-700">
                   <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Configured (app ID ends with {status.cashfree_app_id_last4 || '••••'})
+                  Connected (app ID ends with {status.cashfree_app_id_last4 || '••••'})
                 </div>
-              )}
+              ) : status.cashfree_configured ? (
+                <div className="flex items-center gap-1.5 text-[12px] text-amber-700">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  Saved, but couldn&apos;t reach Cashfree to check (app ID ends with {status.cashfree_app_id_last4 || '••••'})
+                </div>
+              ) : null}
             </div>
           </div>
 

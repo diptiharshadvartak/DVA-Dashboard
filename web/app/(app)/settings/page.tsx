@@ -1,4 +1,6 @@
 import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import { verifyCredentials } from '@/lib/cashfree/client';
 import { SettingsForm } from '@/components/settings/settings-form';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +23,25 @@ export default async function SettingsPage() {
     isAdmin = (profile as any)?.role === 'admin';
   }
 
-  const safeStatus = (status as any) ?? {
+  // "Configured" only means both fields are filled in; ask Cashfree whether
+  // the saved keys actually work so the badge can't show a false green.
+  let cashfreeVerified: 'ok' | 'rejected' | 'unknown' | null = null;
+  if ((status as any)?.cashfree_configured) {
+    const { data: cf } = await supabaseAdmin()
+      .from('ghl_settings')
+      .select('cashfree_app_id, cashfree_secret_key, cashfree_env')
+      .eq('id', 1)
+      .maybeSingle();
+    if (cf?.cashfree_app_id && cf?.cashfree_secret_key) {
+      cashfreeVerified = await verifyCredentials({
+        appId: cf.cashfree_app_id,
+        secretKey: cf.cashfree_secret_key,
+        env: cf.cashfree_env === 'production' ? 'production' : 'sandbox',
+      });
+    }
+  }
+
+  const baseStatus = (status as any) ?? {
     location_id: null,
     ai_provider: 'anthropic',
     ghl_configured: false,       ghl_last4: '',
@@ -29,6 +49,7 @@ export default async function SettingsPage() {
     anthropic_configured: false, anthropic_last4: '',
     ai_configured: false,        ai_last4: '',
   };
+  const safeStatus = { ...baseStatus, cashfree_verified: cashfreeVerified };
 
   return (
     <div className="px-7 py-7 max-w-[900px]">

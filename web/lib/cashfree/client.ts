@@ -134,6 +134,32 @@ export async function cancelPaymentLink(
 }
 
 /**
+ * Asks Cashfree whether the App ID + Secret are accepted, without creating
+ * anything: looks up a link id that can't exist. 404 = keys accepted,
+ * 401/403 = keys rejected, anything else (network, 5xx) = couldn't tell.
+ */
+export async function verifyCredentials(
+  cfg: CashfreeConfig
+): Promise<'ok' | 'rejected' | 'unknown'> {
+  try {
+    const res = await fetch(`${getBaseUrl(cfg.env)}/links/__dva_credentials_check__`, {
+      headers: {
+        'x-api-version': '2023-08-01',
+        'x-client-id': cfg.appId,
+        'x-client-secret': cfg.secretKey,
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.status === 401 || res.status === 403) return 'rejected';
+    if (res.ok || res.status === 404) return 'ok';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * Verifies the signature on a Cashfree webhook payload.
  * Cashfree sends:
  *   - Header `x-webhook-signature`: HMAC-SHA256(timestamp + raw_body, secret) base64

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { verifyCredentials } from '@/lib/cashfree/client';
 
 export const runtime = 'nodejs';
 
@@ -58,6 +59,34 @@ export async function POST(req: Request) {
   }
 
   const admin = supabaseAdmin();
+
+  // If any Cashfree credential is changing, test the resulting combination
+  // against Cashfree before saving, so bad keys never show as "Configured".
+  if (patch.cashfree_app_id || patch.cashfree_secret_key || patch.cashfree_env) {
+    if (patch.cashfree_app_id?.includes('@')) {
+      return new NextResponse(
+        'Cashfree App ID looks like an email address. Copy the App ID from Cashfree → Developers → API Keys.',
+        { status: 400 }
+      );
+    }
+    const { data: current } = await admin
+      .from('ghl_settings')
+      .select('cashfree_app_id, cashfree_secret_key, cashfree_env')
+      .eq('id', 1)
+      .maybeSingle();
+    const appId = patch.cashfree_app_id ?? current?.cashfree_app_id;
+    const secretKey = patch.cashfree_secret_key ?? current?.cashfree_secret_key;
+    const env = (patch.cashfree_env ?? current?.cashfree_env) === 'production' ? 'production' : 'sandbox';
+    if (appId && secretKey) {
+      const result = await verifyCredentials({ appId, secretKey, env });
+      if (result === 'rejected') {
+        return new NextResponse(
+          `Cashfree rejected these keys for ${env === 'production' ? 'Production' : 'Sandbox'}. Check the App ID and Secret Key, and that the environment matches the keys (test keys = Sandbox, live keys = Production). Nothing was saved.`,
+          { status: 400 }
+        );
+      }
+    }
+  }
   const { error } = await admin
     .from('ghl_settings')
     .update({ ...patch, updated_at: new Date().toISOString() })
