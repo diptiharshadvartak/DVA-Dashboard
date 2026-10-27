@@ -746,6 +746,11 @@ function normalizeMode(m: any): string {
 function parseDate(v: any): string | null {
   if (!v) return null;
   if (v instanceof Date) {
+    // SheetJS builds Excel date cells from the 1899 epoch, and in IST that
+    // lands ~10 seconds BEFORE local midnight (01-06-2027 arrives as
+    // 31 May 23:59:50), so reading the day directly saved every date one day
+    // early. Rounding to the nearest minute snaps it back onto the real day.
+    v = new Date(Math.round(v.getTime() / 60000) * 60000);
     const y = v.getFullYear();
     const m = String(v.getMonth() + 1).padStart(2, '0');
     const d = String(v.getDate()).padStart(2, '0');
