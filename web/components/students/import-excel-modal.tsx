@@ -245,7 +245,7 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
 
   function downloadSample() {
     const headers = [
-      'Email Id','Name','Surname','Mobile Number','Alternate Number','Membership','Tags','Group',
+      'Email Id','Name','Surname','Mobile Number','Alternate Number','Membership','Tags','Group','Payment Link',
       'Course Start Date','Course End Date',
       'Total Fee','Payment Mode',
       'Down Payment','Down Payment Date',
@@ -260,11 +260,11 @@ export function ImportExcelModal({ onClose, onDone }: { onClose: () => void; onD
     // shows as Fully Paid.
     const rows = [
       // Fully paid: 30000 + 60000 + 60000 = 150000 = Total Fee
-      ['anjali@gmail.com','Anjali','Sharma','9876543210','9876500000','Diamond','S','Batch A','01 Jan 2025','30 Jun 2025','150000','Card','30000','05 Jan 2025','60000','05 Feb 2025','60000','05 Mar 2025','','','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','20 May 2026','BBR2','18 May 2026','Graduated. Fully paid.','15 May 2026','Final review - completed everything'],
+      ['anjali@gmail.com','Anjali','Sharma','9876543210','9876500000','Diamond','S','Batch A','https://payments.cashfree.com/forms/dva-diamond','01 Jan 2025','30 Jun 2025','150000','Card','30000','05 Jan 2025','60000','05 Feb 2025','60000','05 Mar 2025','','','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','TRUE','20 May 2026','BBR2','18 May 2026','Graduated. Fully paid.','15 May 2026','Final review - completed everything'],
       // Partly paid: 30000 + 50000 = 80000 of 180000 → 100000 outstanding
-      ['rohan@gmail.com','Rohan','Verma','9123456789','','Diamond','SDC','Batch B','15 Feb 2025','15 Aug 2025','180000','NEFT','30000','20 Feb 2025','50000','20 Mar 2025','','','','','TRUE','TRUE','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','BBR-ABSENT','','On track, balance pending.','10 May 2026','Discussed month 6 plan'],
+      ['rohan@gmail.com','Rohan','Verma','9123456789','','Diamond','SDC','Batch B','https://payments.cashfree.com/forms/dva-diamond','15 Feb 2025','15 Aug 2025','180000','NEFT','30000','20 Feb 2025','50000','20 Mar 2025','','','','','TRUE','TRUE','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','BBR-ABSENT','','On track, balance pending.','10 May 2026','Discussed month 6 plan'],
       // Down payment only: 20000 of 120000 → 100000 outstanding
-      ['meera@gmail.com','Meera','Iyer','9988776655','','Diamond','J','Batch C','10 Apr 2025','10 Oct 2025','120000','UPI','20000','12 Apr 2025','','','','','','','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','','','Just started.','01 Apr 2026','Onboarding call, enthusiastic'],
+      ['meera@gmail.com','Meera','Iyer','9988776655','','Diamond','J','Batch C','','10 Apr 2025','10 Oct 2025','120000','UPI','20000','12 Apr 2025','','','','','','','TRUE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','FALSE','','','','Just started.','01 Apr 2026','Onboarding call, enthusiastic'],
     ];
     const escape = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     const csv = [headers, ...rows].map((r) => r.map((c) => escape(String(c))).join(',')).join('\n');
