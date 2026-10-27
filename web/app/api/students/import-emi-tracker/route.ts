@@ -72,6 +72,9 @@ function achievementFields(row: ParsedRow): Record<string, any> {
   if (row.alternate_number !== undefined) f.alternate_number = row.alternate_number;
   if (row.student_group !== undefined) f.student_group = row.student_group;
   if (row.profile_link !== undefined) f.profile_link = row.profile_link;
+  // Default payment link from the sheet. A blank cell keeps whatever link the
+  // student already has (set from the Payments tab) instead of wiping it.
+  if (row.payment_link) f.payment_link = row.payment_link;
   // DB columns are down_payment / down_payment_date (see migration 0006); the
   // parsed field is downpayment_amount. Writing the wrong name silently failed
   // the insert for every row that has a down payment.

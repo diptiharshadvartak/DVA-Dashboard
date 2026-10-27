@@ -522,7 +522,7 @@ function parseEmiRow(row: any, rowNum: number): EmiRow | { error: string } {
     payment_mode: payModes[0] ?? normalizeMode(row['Payment Mode'] || row['Mode'] || row['payment_mode'] || row['mode']),
     payment_modes: payModes,
     total_fee: totalFeeOverride > 0 ? totalFeeOverride : (fullPay > 0 ? fullPay : finalAmount * total),
-    payment_link: (row['Payment Link'] || row['payment_link'] || '').toString().trim() || null,
+    payment_link: parsePaymentLink(row),
     month_1: hasMonthCol(row, 1) ? parseBool(row['Month 1'] || row['month_1']) : undefined,
     month_2: hasMonthCol(row, 2) ? parseBool(row['Month 2'] || row['month_2']) : undefined,
     month_3: hasMonthCol(row, 3) ? parseBool(row['Month 3'] || row['month_3']) : undefined,
@@ -721,6 +721,15 @@ function cleanPhone(p: any): string {
   if (digits.length === 10) return '+91' + digits;
   if (digits.length === 11 && digits.startsWith('0')) return '+91' + digits.slice(1);
   return digits ? '+' + digits : '';
+}
+
+// The student's default payment link (students.payment_link), used for every
+// EMI that has no Cashfree link of its own. Only http(s) URLs are kept — the
+// same rule as the Change payment link modal — so a stray note in the cell
+// can't end up in a WhatsApp reminder.
+function parsePaymentLink(row: any): string | null {
+  const raw = (row['Payment Link'] || row['Default Payment Link'] || row['payment_link'] || '').toString().trim();
+  return /^https?:\/\//i.test(raw) ? raw : null;
 }
 
 function normalizeMode(m: any): string {
